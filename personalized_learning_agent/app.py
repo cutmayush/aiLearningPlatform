@@ -11,151 +11,58 @@ import os
 from datetime import datetime, timedelta
 import json
 import random
+import google.generativeai as genai  # Library import
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 CORS(app)
 
+# ==================== GEMINI API CONFIGURATION ====================
+# Yahan apni NEW API Key dalein
+GENAI_API_KEY = "AIzaSyBh9AMk0QIk9pqNERkjtRwfLXtRnpZigQs"
+genai.configure(api_key=GENAI_API_KEY)
+
+# Use the latest Gemini Flash model
+print("[DEBUG] Initializing Gemini API with gemini-2.5-flash")
+model = genai.GenerativeModel('gemini-2.5-flash')
+
 # Database configuration
 DATABASE = 'learning_agent.db'
 
 def get_db():
-    """Create database connection"""
     conn = sqlite3.connect(DATABASE)
     conn.row_factory = sqlite3.Row
     return conn
 
 def init_db():
-    """Initialize database with tables and sample data"""
-    # Note: Existence check removed here to allow forced re-initialization from main
     conn = get_db()
     cursor = conn.cursor()
     
-    # Users table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL,
-            email TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    
-    # Student profiles
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS student_profiles (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            current_semester INTEGER NOT NULL,
-            overall_progress REAL DEFAULT 0,
-            learning_pace TEXT DEFAULT 'moderate',
-            streak_days INTEGER DEFAULT 0,
-            last_active DATE,
-            FOREIGN KEY (user_id) REFERENCES users (id)
-        )
-    ''')
-    
-    # Subjects table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS subjects (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            semester INTEGER NOT NULL,
-            description TEXT,
-            total_topics INTEGER DEFAULT 0
-        )
-    ''')
-    
-    # Topics table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS topics (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            subject_id INTEGER NOT NULL,
-            name TEXT NOT NULL,
-            description TEXT,
-            difficulty TEXT DEFAULT 'beginner',
-            order_index INTEGER,
-            FOREIGN KEY (subject_id) REFERENCES subjects (id)
-        )
-    ''')
-    
-    # User progress tracking
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS user_progress (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            topic_id INTEGER NOT NULL,
-            completion_status TEXT DEFAULT 'not_started',
-            score REAL DEFAULT 0,
-            time_spent INTEGER DEFAULT 0,
-            last_accessed TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users (id),
-            FOREIGN KEY (topic_id) REFERENCES topics (id)
-        )
-    ''')
-    
-    # Quiz results
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS quiz_results (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            topic_id INTEGER NOT NULL,
-            score REAL NOT NULL,
-            total_questions INTEGER,
-            time_taken INTEGER,
-            accuracy REAL,
-            completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users (id),
-            FOREIGN KEY (topic_id) REFERENCES topics (id)
-        )
-    ''')
-    
-    # Learning resources
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS learning_resources (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            topic_id INTEGER NOT NULL,
-            type TEXT NOT NULL,
-            title TEXT NOT NULL,
-            url TEXT NOT NULL,
-            language TEXT DEFAULT 'english',
-            difficulty TEXT,
-            FOREIGN KEY (topic_id) REFERENCES topics (id)
-        )
-    ''')
-    
-    # Bookmarks
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS bookmarks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            resource_id INTEGER NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users (id),
-            FOREIGN KEY (resource_id) REFERENCES learning_resources (id)
-        )
-    ''')
+    # Tables Creation
+    cursor.execute('''CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, email TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS student_profiles (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, current_semester INTEGER NOT NULL, overall_progress REAL DEFAULT 0, learning_pace TEXT DEFAULT 'moderate', streak_days INTEGER DEFAULT 0, last_active DATE, FOREIGN KEY (user_id) REFERENCES users (id))''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS subjects (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, semester INTEGER NOT NULL, description TEXT, total_topics INTEGER DEFAULT 0)''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS topics (id INTEGER PRIMARY KEY AUTOINCREMENT, subject_id INTEGER NOT NULL, name TEXT NOT NULL, description TEXT, difficulty TEXT DEFAULT 'beginner', order_index INTEGER, FOREIGN KEY (subject_id) REFERENCES subjects (id))''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS user_progress (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, topic_id INTEGER NOT NULL, completion_status TEXT DEFAULT 'not_started', score REAL DEFAULT 0, time_spent INTEGER DEFAULT 0, last_accessed TIMESTAMP, FOREIGN KEY (user_id) REFERENCES users (id), FOREIGN KEY (topic_id) REFERENCES topics (id))''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS quiz_results (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, topic_id INTEGER NOT NULL, score REAL NOT NULL, total_questions INTEGER, time_taken INTEGER, accuracy REAL, completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (user_id) REFERENCES users (id), FOREIGN KEY (topic_id) REFERENCES topics (id))''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS learning_resources (id INTEGER PRIMARY KEY AUTOINCREMENT, topic_id INTEGER NOT NULL, type TEXT NOT NULL, title TEXT NOT NULL, url TEXT NOT NULL, language TEXT DEFAULT 'english', difficulty TEXT, FOREIGN KEY (topic_id) REFERENCES topics (id))''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS bookmarks (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, resource_id INTEGER NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (user_id) REFERENCES users (id), FOREIGN KEY (resource_id) REFERENCES learning_resources (id))''')
     
     conn.commit()
     insert_sample_data(conn)
     conn.close()
 
 def insert_sample_data(conn):
-    """Insert sample subjects, topics, and resources with Dynamic IDs"""
     cursor = conn.cursor()
-    
-    # Check if data already exists
     cursor.execute('SELECT COUNT(*) FROM subjects')
-    if cursor.fetchone()[0] > 0:
-        return
+    if cursor.fetchone()[0] > 0: return
     
-    print("Inserting sample data...")
+    print("Inserting comprehensive data for all semesters...")
 
-    # 1. Insert Subjects
+    # 1. Insert All Subjects (Sem 1-8)
     subjects_data = [
         ('Programming in C', 1, 'Introduction to programming fundamentals', 15),
-        ('Mathematics-I', 1, 'Engineering Mathematics basics', 12),
+        ('Mathematics-I', 1, 'Calculus and Linear Algebra', 12),
         ('Physics', 1, 'Applied Physics for Engineers', 10),
         ('Data Structures', 2, 'Arrays, Linked Lists, Trees, Graphs', 18),
         ('Object Oriented Programming (Java)', 2, 'OOP concepts with Java', 16),
@@ -180,169 +87,147 @@ def insert_sample_data(conn):
         ('Quantum Computing', 8, 'Quantum Gates, Algorithms', 12),
     ]
     cursor.executemany('INSERT INTO subjects (name, semester, description, total_topics) VALUES (?, ?, ?, ?)', subjects_data)
-    
-    # Helper to get Subject ID by Name
-    def get_id(name):
-        cursor.execute('SELECT id FROM subjects WHERE name = ?', (name,))
+
+    # 2. Comprehensive Topic Map
+    all_topics = {
+        'Programming in C': [('Introduction to C', 'Variables', 'beginner'), ('Control Structures', 'Loops', 'beginner'), ('Arrays & Strings', 'Memory', 'intermediate'), ('Pointers', 'Address', 'advanced')],
+        'Mathematics-I': [('Matrices', 'Rank, Inverse', 'beginner'), ('Calculus', 'Differentiation', 'intermediate'), ('Vector Spaces', 'Basis', 'advanced')],
+        'Physics': [('Quantum Mechanics', 'Schrodinger', 'advanced'), ('Optics', 'Interference', 'intermediate'), ('Semiconductors', 'Diodes', 'intermediate')],
+        'Data Structures': [('Linked Lists', 'Singly, Doubly', 'beginner'), ('Stacks & Queues', 'LIFO, FIFO', 'beginner'), ('Trees', 'BST, AVL', 'intermediate'), ('Graphs', 'BFS, DFS', 'advanced')],
+        'Object Oriented Programming (Java)': [('Java Basics', 'JVM', 'beginner'), ('OOP Principles', 'Inheritance', 'intermediate'), ('Exception Handling', 'Try-Catch', 'intermediate'), ('Multithreading', 'Threads', 'advanced')],
+        'Database Management Systems': [('ER Modeling', 'Entities', 'beginner'), ('SQL Queries', 'Joins', 'intermediate'), ('Normalization', 'BCNF', 'advanced')],
+        'Operating Systems': [('Process Management', 'Scheduling', 'intermediate'), ('Deadlocks', 'Prevention', 'advanced'), ('Memory Management', 'Paging', 'intermediate')],
+        'Web Technologies': [('HTML5 & CSS3', 'Layouts', 'beginner'), ('JavaScript ES6', 'DOM', 'intermediate'), ('React.js', 'Components', 'advanced')],
+        'Artificial Intelligence': [('Search Algorithms', 'BFS, A*', 'intermediate'), ('Knowledge Representation', 'Logic', 'advanced'), ('Game Playing', 'Minimax', 'advanced')],
+        'Cloud Computing': [('Cloud Models', 'IaaS, SaaS', 'beginner'), ('Virtualization', 'VMs', 'intermediate'), ('AWS Essentials', 'EC2', 'advanced')],
+        'Natural Language Processing': [('Text Preprocessing', 'Tokenization', 'beginner'), ('Word Embeddings', 'Word2Vec', 'intermediate'), ('Transformers', 'BERT', 'advanced')],
+        'Blockchain Technology': [('Blockchain Basics', 'Hash', 'beginner'), ('Smart Contracts', 'Solidity', 'advanced'), ('Consensus', 'PoW', 'intermediate')]
+    }
+
+    topic_id_map = {} 
+    for subj_name, topics in all_topics.items():
+        cursor.execute('SELECT id FROM subjects WHERE name = ?', (subj_name,))
         res = cursor.fetchone()
-        return res['id'] if res else None
+        if not res: continue
+        subj_id = res['id']
+        for idx, (t_name, t_desc, t_diff) in enumerate(topics):
+            cursor.execute('INSERT INTO topics (subject_id, name, description, difficulty, order_index) VALUES (?, ?, ?, ?, ?)', (subj_id, t_name, t_desc, t_diff, idx+1))
+            topic_id_map[t_name] = cursor.lastrowid
 
-    # Get IDs for subjects we want to populate
-    math_id = get_id('Mathematics-I')
-    phy_id = get_id('Physics')
-    c_id = get_id('Programming in C')
-    java_id = get_id('Object Oriented Programming (Java)')
-    dbms_id = get_id('Database Management Systems')
-    web_id = get_id('Web Technologies')
-
-    # 2. Insert Topics
-    topics_data = []
-    
-    # Mathematics-I Topics
-    if math_id:
-        topics_data.extend([
-            (math_id, 'Matrices', 'Types of matrices, Rank, Inverse', 'beginner', 1),
-            (math_id, 'Calculus', 'Limits, Continuity, Differentiation', 'intermediate', 2),
-            (math_id, 'Differential Equations', 'First order and higher order', 'advanced', 3)
-        ])
-
-    # Physics Topics
-    if phy_id:
-        topics_data.extend([
-            (phy_id, 'Quantum Mechanics', 'Wave-particle duality, Schrodinger equation', 'advanced', 1),
-            (phy_id, 'Optics', 'Interference, Diffraction, Polarization', 'intermediate', 2),
-            (phy_id, 'Electromagnetism', 'Maxwell equations, EM waves', 'intermediate', 3)
-        ])
-
-    # C Programming Topics
-    if c_id:
-        topics_data.extend([
-            (c_id, 'Introduction to C', 'Variables, Data Types, Operators', 'beginner', 1),
-            (c_id, 'Control Structures', 'If-else, Loops (for, while)', 'beginner', 2),
-            (c_id, 'Arrays and Strings', '1D/2D Arrays, String handling', 'intermediate', 3),
-            (c_id, 'Pointers', 'Pointer arithmetic, Memory management', 'advanced', 4)
-        ])
-        
-    # Java Topics
-    if java_id:
-        topics_data.extend([
-            (java_id, 'Java Basics', 'JVM, JRE, Syntax', 'beginner', 1),
-            (java_id, 'OOP Concepts', 'Classes, Objects, Inheritance', 'intermediate', 2),
-            (java_id, 'Collections', 'List, Set, Map', 'advanced', 3)
-        ])
-
-    # DBMS Topics
-    if dbms_id:
-        topics_data.extend([
-            (dbms_id, 'Introduction to DBMS', 'Database concepts', 'beginner', 1),
-            (dbms_id, 'SQL Basics', 'SELECT, INSERT, UPDATE', 'intermediate', 2)
-        ])
-        
-    # Web Tech Topics
-    if web_id:
-         topics_data.extend([
-            (web_id, 'HTML/CSS', 'Structure and Style', 'beginner', 1),
-            (web_id, 'JavaScript', 'DOM, ES6', 'intermediate', 2)
-        ])
-
-    cursor.executemany('INSERT INTO topics (subject_id, name, description, difficulty, order_index) VALUES (?, ?, ?, ?, ?)', topics_data)
-    
-    # 3. Insert Resources (Videos & Articles)
-    def get_topic_id(topic_name):
-        cursor.execute('SELECT id FROM topics WHERE name = ?', (topic_name,))
-        res = cursor.fetchone()
-        return res['id'] if res else None
-
+    # 3. Resources
     resources_data = []
-
-    # Resources for C Programming
-    t_c_intro = get_topic_id('Introduction to C')
-    if t_c_intro:
-        resources_data.extend([
-            (t_c_intro, 'video', 'C Programming in One Shot', 'https://www.youtube.com/watch?v=irqbmMNs2Bo', 'english', 'beginner'),
-            (t_c_intro, 'article', 'C Language GeeksforGeeks', 'https://www.geeksforgeeks.org/c-programming-language/', 'english', 'beginner')
-        ])
-        
-    # Resources for Mathematics
-    t_matrices = get_topic_id('Matrices')
-    if t_matrices:
-        resources_data.extend([
-            (t_matrices, 'video', 'Matrices One Shot', 'https://www.youtube.com/watch?v=xyz123', 'english', 'beginner'),
-            (t_matrices, 'article', 'Matrices Notes', 'https://www.mathsisfun.com/algebra/matrix-introduction.html', 'english', 'beginner')
-        ])
-        
-    # Resources for Physics
-    t_quantum = get_topic_id('Quantum Mechanics')
-    if t_quantum:
-        resources_data.extend([
-            (t_quantum, 'video', 'Quantum Mechanics Basics', 'https://www.youtube.com/watch?v=example', 'english', 'advanced')
-        ])
-
-    # Resources for Java
-    t_java = get_topic_id('Java Basics')
-    if t_java:
-         resources_data.extend([
-            (t_java, 'video', 'Java Tutorial for Beginners', 'https://www.youtube.com/watch?v=eIrMbAQSU34', 'english', 'beginner')
-        ])
+    for t_name, t_id in topic_id_map.items():
+        resources_data.append((t_id, 'video', f'{t_name} - Video Tutorial', 'https://www.youtube.com/results?search_query=' + t_name.replace(' ', '+'), 'english', 'beginner'))
+        resources_data.append((t_id, 'article', f'{t_name} - Study Notes', 'https://www.geeksforgeeks.org/' + t_name.replace(' ', '-').lower() + '/', 'english', 'intermediate'))
 
     cursor.executemany('INSERT INTO learning_resources (topic_id, type, title, url, language, difficulty) VALUES (?, ?, ?, ?, ?, ?)', resources_data)
-
     conn.commit()
-    print("Sample data inserted successfully!")
+    print("Comprehensive sample data inserted successfully!")
 
-# ==================== AUTHENTICATION ROUTES ====================
+# ==================== AI HELPER FUNCTIONS ====================
+
+def get_gemini_quiz(topic_name, subject_name, difficulty):
+    """Generates 5 MCQs using Gemini API"""
+    prompt = f"""Create 5 multiple-choice questions (MCQs) on '{topic_name}' for the subject '{subject_name}' at {difficulty} difficulty level.
+Return ONLY a valid JSON array with this exact structure:
+[
+  {{"id": 1, "question": "...", "options": ["A", "B", "C", "D"], "correct_answer": 0}},
+  {{"id": 2, "question": "...", "options": ["A", "B", "C", "D"], "correct_answer": 1}},
+  ...
+]
+No markdown, no extra text, just the JSON array."""
+    try:
+        print(f"[DEBUG] Requesting quiz for: {topic_name}")
+        response = model.generate_content(prompt)
+        text = response.text.strip()
+        print(f"[DEBUG] Raw Gemini Response: {text[:200]}")
+        
+        # Clean up response
+        text = text.replace('```json', '').replace('```', '').replace('json', '').strip()
+        
+        # Parse JSON
+        questions = json.loads(text)
+        print(f"[DEBUG] Successfully parsed {len(questions)} questions from Gemini")
+        return questions
+    except json.JSONDecodeError as e:
+        print(f"[ERROR] JSON parsing failed: {e}")
+        print(f"[DEBUG] Response text: {text[:500]}")
+        return None
+    except Exception as e:
+        print(f"[ERROR] Gemini API Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+def get_gemini_recommendations(weak_areas_list, current_sem):
+    """Generates recommendations using Gemini API"""
+    topics_str = ", ".join([w['name'] for w in weak_areas_list])
+    prompt = f"""A student in Semester {current_sem} is struggling with these topics: {topics_str}.
+Provide exactly 3 specific, motivating recommendations.
+Return ONLY a valid JSON array with this exact structure:
+[
+  {{"type": "revision", "priority": "high", "message": "..."}},
+  {{"type": "practice", "priority": "medium", "message": "..."}},
+  {{"type": "progress", "priority": "low", "message": "..."}}
+]
+No markdown, no extra text, just the JSON array."""
+    try:
+        print(f"[DEBUG] Requesting recommendations for weak areas: {topics_str}")
+        response = model.generate_content(prompt)
+        text = response.text.strip()
+        print(f"[DEBUG] Raw Gemini Recommendations Response: {text[:200]}")
+        
+        # Clean up response
+        text = text.replace('```json', '').replace('```', '').replace('json', '').strip()
+        
+        # Parse JSON
+        recommendations = json.loads(text)
+        print(f"[DEBUG] Successfully parsed {len(recommendations)} recommendations from Gemini")
+        return recommendations
+    except json.JSONDecodeError as e:
+        print(f"[ERROR] JSON parsing failed for recommendations: {e}")
+        print(f"[DEBUG] Response text: {text[:500]}")
+        return None
+    except Exception as e:
+        print(f"[ERROR] Gemini Recommendations API Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+# ==================== ROUTES ====================
 
 @app.route('/')
 def index():
-    """Landing page"""
-    if 'user_id' in session:
-        return redirect(url_for('dashboard'))
+    if 'user_id' in session: return redirect(url_for('dashboard'))
     return render_template('index.html')
 
 @app.route('/register', methods=['POST'])
 def register():
-    """User registration endpoint"""
     data = request.json
-    username = data.get('username')
-    password = data.get('password')
-    email = data.get('email')
-    
-    if not username or not password:
-        return jsonify({'error': 'Username and password required'}), 400
-    
+    username, password, email = data.get('username'), data.get('password'), data.get('email')
+    if not username or not password: return jsonify({'error': 'Missing fields'}), 400
     conn = get_db()
-    cursor = conn.cursor()
-    
     try:
-        hashed_password = generate_password_hash(password)
-        cursor.execute('INSERT INTO users (username, password, email) VALUES (?, ?, ?)', (username, hashed_password, email))
+        hashed_pw = generate_password_hash(password)
+        cursor = conn.cursor()
+        cursor.execute('INSERT INTO users (username, password, email) VALUES (?, ?, ?)', (username, hashed_pw, email))
         user_id = cursor.lastrowid
         cursor.execute('INSERT INTO student_profiles (user_id, current_semester, last_active) VALUES (?, 1, DATE("now"))', (user_id,))
         conn.commit()
-        return jsonify({'message': 'Registration successful', 'user_id': user_id}), 201
-    except sqlite3.IntegrityError:
-        return jsonify({'error': 'Username already exists'}), 409
-    finally:
-        conn.close()
+        return jsonify({'message': 'Success', 'user_id': user_id}), 201
+    except sqlite3.IntegrityError: return jsonify({'error': 'Username exists'}), 409
+    finally: conn.close()
 
 @app.route('/login', methods=['POST'])
 def login():
-    """User login endpoint"""
     data = request.json
-    username = data.get('username')
-    password = data.get('password')
-    
     conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute('SELECT * FROM users WHERE username = ?', (username,))
-    user = cursor.fetchone()
+    user = conn.execute('SELECT * FROM users WHERE username = ?', (data.get('username'),)).fetchone()
     conn.close()
-    
-    if user and check_password_hash(user['password'], password):
+    if user and check_password_hash(user['password'], data.get('password')):
         session['user_id'] = user['id']
         session['username'] = user['username']
-        return jsonify({'message': 'Login successful', 'user_id': user['id'], 'username': user['username']}), 200
-    
+        return jsonify({'message': 'Success', 'user_id': user['id']}), 200
     return jsonify({'error': 'Invalid credentials'}), 401
 
 @app.route('/logout')
@@ -350,413 +235,185 @@ def logout():
     session.clear()
     return redirect(url_for('index'))
 
-# ==================== DASHBOARD & PROFILE ROUTES ====================
-
 @app.route('/dashboard')
 def dashboard():
-    if 'user_id' not in session:
-        return redirect(url_for('index'))
+    if 'user_id' not in session: return redirect(url_for('index'))
     return render_template('dashboard.html')
 
 @app.route('/api/profile', methods=['GET'])
 def get_profile():
-    """Get user profile and progress"""
-    if 'user_id' not in session:
-        return jsonify({'error': 'Not authenticated'}), 401
-    
-    user_id = session['user_id']
+    if 'user_id' not in session: return jsonify({'error': 'Auth failed'}), 401
     conn = get_db()
-    cursor = conn.cursor()
-    
-    # 1. Get Basic Profile
-    cursor.execute('''
-        SELECT sp.*, u.username, u.email
-        FROM student_profiles sp
-        JOIN users u ON sp.user_id = u.id
-        WHERE sp.user_id = ?
-    ''', (user_id,))
-    
-    profile_row = cursor.fetchone()
-    if not profile_row:
-        conn.close()
-        return jsonify({'error': 'Profile not found'}), 404
-        
-    profile = dict(profile_row)
-    
-    # 2. Get Statistics (with COALESCE to handle nulls)
-    cursor.execute('''
-        SELECT 
-            COUNT(DISTINCT up.topic_id) as completed_topics,
-            COALESCE(AVG(up.score), 0) as avg_score,
-            COALESCE(SUM(up.time_spent), 0) as total_time
-        FROM user_progress up
-        WHERE up.user_id = ? AND up.completion_status = 'completed'
-    ''', (user_id,))
-    
-    stats_row = cursor.fetchone()
-    stats = dict(stats_row) if stats_row else {}
+    profile = dict(conn.execute('SELECT sp.*, u.username FROM student_profiles sp JOIN users u ON sp.user_id = u.id WHERE u.id = ?', (session['user_id'],)).fetchone())
+    stats = dict(conn.execute('SELECT COUNT(DISTINCT topic_id) as completed_topics, COALESCE(AVG(score),0) as avg_score, COALESCE(SUM(time_spent),0) as total_time FROM user_progress WHERE user_id = ? AND completion_status="completed"', (session['user_id'],)).fetchone())
     profile.update(stats)
-    
     conn.close()
-    return jsonify(profile), 200
+    return jsonify(profile)
 
 @app.route('/api/profile/update', methods=['POST'])
 def update_profile():
-    if 'user_id' not in session: return jsonify({'error': 'Not authenticated'}), 401
-    
-    user_id = session['user_id']
-    data = request.json
+    if 'user_id' not in session: return jsonify({'error': 'Auth failed'}), 401
     conn = get_db()
-    conn.execute('UPDATE student_profiles SET current_semester = ?, last_active = DATE("now") WHERE user_id = ?', 
-                (data.get('semester', 1), user_id))
+    conn.execute('UPDATE student_profiles SET current_semester = ? WHERE user_id = ?', (request.json.get('semester'), session['user_id']))
     conn.commit()
     conn.close()
-    return jsonify({'message': 'Profile updated'}), 200
-
-# ==================== SUBJECT & TOPIC ROUTES ====================
+    return jsonify({'message': 'Updated'})
 
 @app.route('/api/subjects', methods=['GET'])
 def get_subjects():
-    """Get subjects by semester with PROGRESS count"""
-    semester = request.args.get('semester', type=int)
+    sem = request.args.get('semester', type=int)
     user_id = session.get('user_id')
-    
     conn = get_db()
-    cursor = conn.cursor()
-    
-    query = '''
-        SELECT s.*,
-        (SELECT COUNT(DISTINCT up.topic_id) 
-         FROM user_progress up 
-         JOIN topics t ON up.topic_id = t.id 
-         WHERE t.subject_id = s.id AND up.user_id = ? AND up.completion_status = 'completed') as completed
-        FROM subjects s
-    '''
+    query = '''SELECT s.*, (SELECT COUNT(DISTINCT up.topic_id) FROM user_progress up JOIN topics t ON up.topic_id=t.id WHERE t.subject_id=s.id AND up.user_id=? AND up.completion_status='completed') as completed FROM subjects s'''
     params = [user_id]
-    
-    if semester:
+    if sem:
         query += ' WHERE s.semester = ? ORDER BY s.name'
-        params.append(semester)
+        params.append(sem)
     else:
         query += ' ORDER BY s.semester, s.name'
-        
-    cursor.execute(query, params)
-    subjects = [dict(row) for row in cursor.fetchall()]
+    subjects = [dict(row) for row in conn.execute(query, params).fetchall()]
     conn.close()
-    
-    return jsonify(subjects), 200
+    return jsonify(subjects)
 
 @app.route('/api/subjects/<int:subject_id>/topics', methods=['GET'])
 def get_topics(subject_id):
     conn = get_db()
-    cursor = conn.cursor()
-    user_id = session.get('user_id', 0)
-    
-    cursor.execute('''
-        SELECT t.*, 
-            COALESCE(up.completion_status, 'not_started') as user_status,
-            COALESCE(up.score, 0) as user_score
-        FROM topics t
-        LEFT JOIN user_progress up ON t.id = up.topic_id AND up.user_id = ?
-        WHERE t.subject_id = ?
-        ORDER BY t.order_index
-    ''', (user_id, subject_id))
-    
-    topics = [dict(row) for row in cursor.fetchall()]
+    topics = [dict(row) for row in conn.execute('''SELECT t.*, COALESCE(up.completion_status, 'not_started') as user_status, COALESCE(up.score, 0) as user_score FROM topics t LEFT JOIN user_progress up ON t.id = up.topic_id AND up.user_id = ? WHERE t.subject_id = ? ORDER BY t.order_index''', (session.get('user_id'), subject_id)).fetchall()]
     conn.close()
-    return jsonify(topics), 200
-
-@app.route('/api/topics/<int:topic_id>', methods=['GET'])
-def get_topic_details(topic_id):
-    conn = get_db()
-    cursor = conn.cursor()
-    
-    cursor.execute('''
-        SELECT t.*, s.name as subject_name, s.semester
-        FROM topics t
-        JOIN subjects s ON t.subject_id = s.id
-        WHERE t.id = ?
-    ''', (topic_id,))
-    
-    row = cursor.fetchone()
-    if not row:
-        conn.close()
-        return jsonify({'error': 'Topic not found'}), 404
-        
-    topic = dict(row)
-    
-    if 'user_id' in session:
-        cursor.execute('SELECT * FROM user_progress WHERE user_id = ? AND topic_id = ?', 
-                      (session['user_id'], topic_id))
-        progress = cursor.fetchone()
-        if progress:
-            topic['progress'] = dict(progress)
-    
-    conn.close()
-    return jsonify(topic), 200
-
-# ==================== LEARNING RESOURCES & RECOMMENDATIONS ====================
+    return jsonify(topics)
 
 @app.route('/api/topics/<int:topic_id>/resources', methods=['GET'])
 def get_resources(topic_id):
-    language = request.args.get('language', 'english')
-    resource_type = request.args.get('type')
-    
     conn = get_db()
-    query = 'SELECT * FROM learning_resources WHERE topic_id = ? AND language = ?'
-    params = [topic_id, language]
-    
-    if resource_type:
-        query += ' AND type = ?'
-        params.append(resource_type)
-    
-    rows = conn.execute(query, params).fetchall()
-    resources = [dict(row) for row in rows]
+    res = [dict(row) for row in conn.execute('SELECT * FROM learning_resources WHERE topic_id = ?', (topic_id,)).fetchall()]
     conn.close()
-    return jsonify(resources), 200
+    return jsonify(res)
 
-@app.route('/api/recommendations', methods=['GET'])
-def get_recommendations():
-    if 'user_id' not in session: return jsonify({'error': 'Not authenticated'}), 401
-    
-    user_id = session['user_id']
+# ==================== AI-POWERED QUIZ ROUTE ====================
+@app.route('/api/quiz/<int:topic_id>', methods=['GET'])
+def get_quiz(topic_id):
     conn = get_db()
-    
-    # Weak areas
-    weak_rows = conn.execute('''
-        SELECT t.*, s.name as subject_name, up.score
-        FROM user_progress up
-        JOIN topics t ON up.topic_id = t.id
-        JOIN subjects s ON t.subject_id = s.id
-        WHERE up.user_id = ? AND up.score < 70
-        ORDER BY up.score ASC LIMIT 5
-    ''', (user_id,)).fetchall()
-    weak_areas = [dict(row) for row in weak_rows]
-    
-    # Next topics
-    next_rows = conn.execute('''
-        SELECT t.*, s.name as subject_name, s.semester
-        FROM topics t
-        JOIN subjects s ON t.subject_id = s.id
-        LEFT JOIN user_progress up ON t.id = up.topic_id AND up.user_id = ?
-        WHERE up.id IS NULL OR up.completion_status != 'completed'
-        ORDER BY t.order_index LIMIT 5
-    ''', (user_id,)).fetchall()
-    next_topics = [dict(row) for row in next_rows]
-    
+    topic = conn.execute('SELECT t.name, t.difficulty, s.name as subject FROM topics t JOIN subjects s ON t.subject_id=s.id WHERE t.id=?', (topic_id,)).fetchone()
     conn.close()
+    
+    if not topic: return jsonify({'error': 'Topic not found'}), 404
+    
+    # 1. Try Gemini API
+    print(f"Generating AI Quiz for: {topic['name']}")
+    questions = get_gemini_quiz(topic['name'], topic['subject'], topic['difficulty'])
+    
+    # 2. Fallback
+    if not questions:
+        print("Gemini API failed, using fallback.")
+        questions = [
+            {'id': 1, 'question': f'What is a core concept of {topic["name"]}?', 'options': ['Concept A', 'Concept B', 'Concept C', 'Concept D'], 'correct_answer': 0},
+            {'id': 2, 'question': f'Why is {topic["name"]} important in {topic["subject"]}?', 'options': ['Reason X', 'Reason Y', 'Reason Z', 'Reason W'], 'correct_answer': 1},
+            {'id': 3, 'question': f'Which tool is used in {topic["name"]}?', 'options': ['Tool 1', 'Tool 2', 'Tool 3', 'Tool 4'], 'correct_answer': 2},
+            {'id': 4, 'question': f'True or False: {topic["name"]} is complex.', 'options': ['True', 'False', 'Depends', 'None'], 'correct_answer': 0},
+            {'id': 5, 'question': f'Apply {topic["name"]} to a problem.', 'options': ['Sol 1', 'Sol 2', 'Sol 3', 'Sol 4'], 'correct_answer': 3},
+        ]
     
     return jsonify({
-        'weak_areas': weak_areas,
-        'next_topics': next_topics,
-        'recommendations': generate_ai_recommendations(weak_areas, next_topics)
-    }), 200
-
-def generate_ai_recommendations(weak_areas, next_topics):
-    recommendations = []
-    if weak_areas:
-        recommendations.append({
-            'type': 'revision',
-            'priority': 'high',
-            'message': f'Focus on revising {len(weak_areas)} weak topics to strengthen fundamentals'
-        })
-    if next_topics:
-        recommendations.append({
-            'type': 'progress',
-            'priority': 'medium',
-            'message': f'Continue learning with {next_topics[0]["name"]} in {next_topics[0]["subject_name"]}'
-        })
-    recommendations.append({
-        'type': 'practice',
-        'priority': 'medium',
-        'message': 'Take more quizzes to improve retention and identify knowledge gaps'
+        'topic_id': topic_id, 'topic_name': topic['name'], 'subject': topic['subject'], 'time_limit': 300, 'questions': questions
     })
-    return recommendations
 
-# ==================== PROGRESS & QUIZ ====================
-
-@app.route('/api/progress/update', methods=['POST'])
-def update_progress():
-    if 'user_id' not in session: return jsonify({'error': 'Not authenticated'}), 401
-    
-    user_id = session['user_id']
+@app.route('/api/quiz/submit', methods=['POST'])
+def submit_quiz():
     data = request.json
-    topic_id = data.get('topic_id')
-    status = data.get('status', 'in_progress')
-    time_spent = data.get('time_spent', 0)
-    
+    score = (sum(1 for a in data['answers'] if a.get('is_correct')) / len(data['answers'])) * 100
     conn = get_db()
-    cursor = conn.cursor()
-    
-    cursor.execute('SELECT id FROM user_progress WHERE user_id = ? AND topic_id = ?', (user_id, topic_id))
-    existing = cursor.fetchone()
-    
-    if existing:
-        cursor.execute('''
-            UPDATE user_progress
-            SET completion_status = ?, time_spent = time_spent + ?, last_accessed = CURRENT_TIMESTAMP
-            WHERE user_id = ? AND topic_id = ?
-        ''', (status, time_spent, user_id, topic_id))
-    else:
-        cursor.execute('''
-            INSERT INTO user_progress (user_id, topic_id, completion_status, time_spent, last_accessed)
-            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-        ''', (user_id, topic_id, status, time_spent))
-    
+    conn.execute('INSERT INTO quiz_results (user_id, topic_id, score, total_questions, time_taken, accuracy) VALUES (?,?,?,?,?,?)', (session['user_id'], data['topic_id'], score, len(data['answers']), data['time_taken'], score))
+    conn.execute('INSERT OR REPLACE INTO user_progress (user_id, topic_id, completion_status, score, last_accessed) VALUES (?, ?, "completed", ?, CURRENT_TIMESTAMP)', (session['user_id'], data['topic_id'], score))
     conn.commit()
     conn.close()
-    return jsonify({'message': 'Progress updated'}), 200
+    return jsonify({'score': score, 'performance': 'Good' if score > 60 else 'Needs Improvement'})
+
+# ==================== AI-POWERED RECOMMENDATIONS ====================
+@app.route('/api/recommendations', methods=['GET'])
+def get_recommendations():
+    if 'user_id' not in session: return jsonify({'error': 'Auth failed'}), 401
+    user_id = session['user_id']
+    conn = get_db()
+    
+    prof = conn.execute('SELECT current_semester FROM student_profiles WHERE user_id=?', (user_id,)).fetchone()
+    current_sem = prof['current_semester'] if prof else 1
+    
+    # Get Weak Areas
+    weak_rows = conn.execute('SELECT t.name, s.name as subject_name, up.score FROM user_progress up JOIN topics t ON up.topic_id = t.id JOIN subjects s ON t.subject_id = s.id WHERE up.user_id = ? AND up.score < 60 ORDER BY up.score ASC LIMIT 3', (user_id,)).fetchall()
+    weak_areas = [dict(r) for r in weak_rows]
+    
+    # Get Next Topics
+    next_rows = conn.execute('SELECT t.*, s.name as subject_name, s.semester FROM topics t JOIN subjects s ON t.subject_id = s.id LEFT JOIN user_progress up ON t.id = up.topic_id AND up.user_id = ? WHERE (up.id IS NULL OR up.completion_status != "completed") AND s.semester = ? ORDER BY t.order_index ASC LIMIT 5', (user_id, current_sem)).fetchall()
+    next_topics = [dict(r) for r in next_rows]
+    conn.close()
+    
+    # 1. Try Gemini Recommendations
+    ai_recommendations = []
+    if weak_areas:
+        print("Generating AI Recommendations...")
+        ai_recommendations = get_gemini_recommendations(weak_areas, current_sem)
+    
+    # 2. Fallback
+    if not ai_recommendations:
+        if weak_areas:
+            t_names = ", ".join([w['name'] for w in weak_areas[:2]])
+            ai_recommendations.append({'type': 'revision', 'priority': 'high', 'message': f"⚠️ Revision Alert: Scores in {t_names} are low. Please review."})
+        
+        if next_topics:
+            top = next_topics[0]
+            ai_recommendations.append({'type': 'progress', 'priority': 'medium', 'message': f"🚀 Recommended: Start {top['name']} from {top['subject_name']}."})
+        else:
+            ai_recommendations.append({'type': 'progress', 'priority': 'low', 'message': "🎉 All caught up for this semester!"})
+            
+        ai_recommendations.append({'type': 'practice', 'priority': 'low', 'message': "💡 Consistency is key! Keep learning."})
+    
+    return jsonify({'weak_areas': weak_areas, 'next_topics': next_topics, 'recommendations': ai_recommendations})
+
+# ==================== ANALYTICS & BOOKMARKS ====================
+
+@app.route('/api/progress/update', methods=['POST'])
+def update_progress_tracking():
+    if 'user_id' not in session: return jsonify({'error': 'Auth failed'}), 401
+    user_id = session['user_id']
+    data = request.json
+    conn = get_db()
+    conn.execute('INSERT OR REPLACE INTO user_progress (user_id, topic_id, completion_status, time_spent, last_accessed) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)', (user_id, data.get('topic_id'), data.get('status', 'in_progress'), data.get('time_spent', 0)))
+    conn.commit()
+    conn.close()
+    return jsonify({'message': 'Updated'})
 
 @app.route('/api/progress/analytics', methods=['GET'])
 def get_analytics():
-    if 'user_id' not in session: return jsonify({'error': 'Not authenticated'}), 401
-    
+    if 'user_id' not in session: return jsonify({'error': 'Auth failed'}), 401
     user_id = session['user_id']
+    semester = request.args.get('semester', type=int)
     conn = get_db()
     
-    # Subject progress
-    subj_rows = conn.execute('''
-        SELECT s.name as subject, COUNT(DISTINCT t.id) as total_topics,
-               COUNT(DISTINCT CASE WHEN up.completion_status = 'completed' THEN up.topic_id END) as completed,
-               AVG(CASE WHEN up.score > 0 THEN up.score ELSE NULL END) as avg_score
-        FROM subjects s
-        JOIN topics t ON s.id = t.subject_id
-        LEFT JOIN user_progress up ON t.id = up.topic_id AND up.user_id = ?
-        GROUP BY s.id, s.name ORDER BY s.semester
-    ''', (user_id,)).fetchall()
+    if not semester:
+        prof = conn.execute('SELECT current_semester FROM student_profiles WHERE user_id=?', (user_id,)).fetchone()
+        semester = prof['current_semester'] if prof else 1
+
+    subj_rows = conn.execute('''SELECT s.name as subject, COUNT(DISTINCT t.id) as total_topics, COUNT(DISTINCT CASE WHEN up.completion_status = 'completed' THEN up.topic_id END) as completed, AVG(CASE WHEN up.score > 0 THEN up.score ELSE NULL END) as avg_score FROM subjects s JOIN topics t ON s.id = t.subject_id LEFT JOIN user_progress up ON t.id = up.topic_id AND up.user_id = ? WHERE s.semester = ? GROUP BY s.id, s.name''', (user_id, semester)).fetchall()
     
-    # Recent quizzes
-    quiz_rows = conn.execute('''
-        SELECT qr.*, t.name as topic_name, s.name as subject_name
-        FROM quiz_results qr
-        JOIN topics t ON qr.topic_id = t.id
-        JOIN subjects s ON t.subject_id = s.id
-        WHERE qr.user_id = ? ORDER BY qr.completed_at DESC LIMIT 10
-    ''', (user_id,)).fetchall()
+    sem_stats = conn.execute('''SELECT COALESCE(SUM(up.time_spent), 0) as semester_time, COUNT(DISTINCT t.id) as total_sem_topics, COUNT(DISTINCT CASE WHEN up.completion_status='completed' THEN up.topic_id END) as completed_sem_topics FROM subjects s JOIN topics t ON s.id = t.subject_id LEFT JOIN user_progress up ON t.id = up.topic_id AND up.user_id = ? WHERE s.semester = ?''', (user_id, semester)).fetchone()
     
-    # Performance trend
-    trend_rows = conn.execute('''
-        SELECT DATE(completed_at) as date, AVG(score) as avg_score, COUNT(*) as quiz_count
-        FROM quiz_results WHERE user_id = ? AND completed_at >= DATE('now', '-30 days')
-        GROUP BY DATE(completed_at) ORDER BY date
-    ''', (user_id,)).fetchall()
+    quiz_rows = conn.execute('''SELECT qr.*, t.name as topic_name, s.name as subject_name FROM quiz_results qr JOIN topics t ON qr.topic_id = t.id JOIN subjects s ON t.subject_id = s.id WHERE qr.user_id = ? AND s.semester = ? ORDER BY qr.completed_at DESC LIMIT 5''', (user_id, semester)).fetchall()
+    
+    trend_rows = conn.execute('''SELECT DATE(qr.completed_at) as date, AVG(qr.score) as avg_score FROM quiz_results qr JOIN topics t ON qr.topic_id = t.id JOIN subjects s ON t.subject_id = s.id WHERE qr.user_id = ? AND s.semester = ? GROUP BY DATE(qr.completed_at) ORDER BY date''', (user_id, semester)).fetchall()
     
     conn.close()
     return jsonify({
         'subject_progress': [dict(r) for r in subj_rows],
         'recent_quizzes': [dict(r) for r in quiz_rows],
-        'performance_trend': [dict(r) for r in trend_rows]
-    }), 200
-
-@app.route('/api/quiz/<int:topic_id>', methods=['GET'])
-def get_quiz(topic_id):
-    conn = get_db()
-    row = conn.execute('SELECT t.*, s.name as subject_name FROM topics t JOIN subjects s ON t.subject_id = s.id WHERE t.id = ?', (topic_id,)).fetchone()
-    conn.close()
-    
-    if not row: return jsonify({'error': 'Topic not found'}), 404
-    
-    topic = dict(row)
-    difficulty = topic['difficulty']
-    num_questions = 10 if difficulty == 'beginner' else 15 if difficulty == 'intermediate' else 20
-    
-    return jsonify({
-        'topic_id': topic_id,
-        'topic_name': topic['name'],
-        'subject': topic['subject_name'],
-        'difficulty': difficulty,
-        'time_limit': num_questions * 60,
-        'questions': generate_sample_questions(topic, num_questions)
-    }), 200
-
-def generate_sample_questions(topic, num_questions):
-    question_templates = [
-        {'q': f'What is the main purpose of {topic["name"]}?', 'o': ['A', 'B', 'C', 'D'], 'c': 0},
-        {'q': f'Key feature of {topic["name"]} is?', 'o': ['X', 'Y', 'Z', 'W'], 'c': 1},
-        {'q': f'Which is true about {topic["name"]}?', 'o': ['False', 'True', 'False', 'False'], 'c': 1}
-    ]
-    questions = []
-    for i in range(num_questions):
-        tmpl = question_templates[i % len(question_templates)]
-        questions.append({
-            'id': i + 1,
-            'question': tmpl['q'],
-            'options': tmpl['o'],
-            'correct_answer': tmpl['c']
-        })
-    return questions
-
-@app.route('/api/quiz/submit', methods=['POST'])
-def submit_quiz():
-    if 'user_id' not in session: return jsonify({'error': 'Not authenticated'}), 401
-    
-    user_id = session['user_id']
-    data = request.json
-    topic_id = data['topic_id']
-    answers = data['answers']
-    time_taken = data['time_taken']
-    
-    # Calculate score
-    total_q = len(answers)
-    correct = sum(1 for a in answers if a.get('is_correct', False))
-    score = (correct / total_q) * 100 if total_q > 0 else 0
-    
-    conn = get_db()
-    cursor = conn.cursor()
-    
-    # 1. Save Result
-    cursor.execute('''
-        INSERT INTO quiz_results (user_id, topic_id, score, total_questions, time_taken, accuracy)
-        VALUES (?, ?, ?, ?, ?, ?)
-    ''', (user_id, topic_id, score, total_q, time_taken, score))
-    
-    # 2. Update Progress (Smart Update: Don't overwrite existing progress blindly)
-    cursor.execute('SELECT id FROM user_progress WHERE user_id=? AND topic_id=?', (user_id, topic_id))
-    existing = cursor.fetchone()
-    
-    if existing:
-        cursor.execute('''
-            UPDATE user_progress 
-            SET completion_status='completed', score=?, last_accessed=CURRENT_TIMESTAMP 
-            WHERE user_id=? AND topic_id=?
-        ''', (score, user_id, topic_id))
-    else:
-        cursor.execute('''
-            INSERT INTO user_progress (user_id, topic_id, completion_status, score, last_accessed)
-            VALUES (?, ?, 'completed', ?, CURRENT_TIMESTAMP)
-        ''', (user_id, topic_id, score))
-        
-    conn.commit()
-    
-    # 3. Get average for this topic
-    stats = conn.execute('SELECT AVG(score) as avg_score, COUNT(*) as attempt_count FROM quiz_results WHERE user_id=? AND topic_id=?', (user_id, topic_id)).fetchone()
-    conn.close()
-    
-    return jsonify({
-        'score': score,
-        'correct_answers': correct,
-        'total_questions': total_q,
-        'accuracy': score,
-        'time_taken': time_taken,
-        'performance': 'Excellent' if score >= 80 else 'Good' if score >= 60 else 'Needs Improvement',
-        'average_score': stats['avg_score'],
-        'attempt_count': stats['attempt_count']
-    }), 200
-
-# ==================== BOOKMARKS ====================
+        'performance_trend': [dict(r) for r in trend_rows],
+        'semester_stats': {'total_time': sem_stats['semester_time'], 'total_topics': sem_stats['total_sem_topics'], 'completed_topics': sem_stats['completed_sem_topics']}
+    })
 
 @app.route('/api/bookmarks', methods=['GET'])
 def get_bookmarks():
     if 'user_id' not in session: return jsonify({'error': 'Not authenticated'}), 401
     conn = get_db()
-    rows = conn.execute('''
-        SELECT lr.*, t.name as topic_name, s.name as subject_name 
-        FROM bookmarks b
-        JOIN learning_resources lr ON b.resource_id = lr.id
-        JOIN topics t ON lr.topic_id = t.id
-        JOIN subjects s ON t.subject_id = s.id
-        WHERE b.user_id = ? ORDER BY b.created_at DESC
-    ''', (session['user_id'],)).fetchall()
+    rows = conn.execute('''SELECT lr.*, t.name as topic_name, s.name as subject_name FROM bookmarks b JOIN learning_resources lr ON b.resource_id = lr.id JOIN topics t ON lr.topic_id = t.id JOIN subjects s ON t.subject_id = s.id WHERE b.user_id = ? ORDER BY b.created_at DESC''', (session['user_id'],)).fetchall()
     data = [dict(r) for r in rows]
     conn.close()
     return jsonify(data), 200
@@ -766,14 +423,11 @@ def add_bookmark():
     if 'user_id' not in session: return jsonify({'error': 'Not authenticated'}), 401
     try:
         conn = get_db()
-        conn.execute('INSERT INTO bookmarks (user_id, resource_id) VALUES (?, ?)', 
-                    (session['user_id'], request.json.get('resource_id')))
+        conn.execute('INSERT INTO bookmarks (user_id, resource_id) VALUES (?, ?)', (session['user_id'], request.json.get('resource_id')))
         conn.commit()
         return jsonify({'message': 'Bookmark added'}), 201
-    except sqlite3.IntegrityError:
-        return jsonify({'message': 'Already bookmarked'}), 200
-    finally:
-        conn.close()
+    except sqlite3.IntegrityError: return jsonify({'message': 'Already bookmarked'}), 200
+    finally: conn.close()
 
 @app.route('/api/bookmarks/remove/<int:bookmark_id>', methods=['DELETE'])
 def remove_bookmark(bookmark_id):
@@ -784,20 +438,11 @@ def remove_bookmark(bookmark_id):
     conn.close()
     return jsonify({'message': 'Removed'}), 200
 
-# ==================== MAIN (FORCE RESET) ====================
-
 if __name__ == '__main__':
-    # 1. Purana Database Force Delete karein (For Hackathon/Testing Only)
+    # Force Reset Database
     if os.path.exists(DATABASE):
-        try:
-            os.remove(DATABASE)
-            print("Purana database successfully delete kar diya gaya.")
-        except Exception as e:
-            print(f"Delete warning: {e}")
-
-    # 2. Naya Database Initialize karein (Ensure Sample Data is Inserted)
+        try: os.remove(DATABASE)
+        except: pass
     init_db()
-    print("Naya database Mathematics, Physics aur sabhi subjects ke saath ban gaya hai!")
-    
-    print("Starting Personalized Learning Path Agent...")
+    print("AI-Powered Learning Agent Ready!")
     app.run(debug=True, host='0.0.0.0', port=5000)
