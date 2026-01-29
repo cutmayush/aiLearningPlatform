@@ -7,11 +7,8 @@ let charts = {};
 // ==================== INITIALIZATION ====================
 document.addEventListener('DOMContentLoaded', () => {
     loadUserProfile();
-    loadSubjects();
     initializeCharts();
-    loadAnalytics(); // Load charts data immediately
-    loadRecommendations();
-    loadBookmarks();
+    // Note: loadSubjects will be called after profile loads to get correct semester
     
     // Set default active section safely
     showSection('overview');
@@ -20,20 +17,25 @@ document.addEventListener('DOMContentLoaded', () => {
 // ==================== UTILITY FUNCTIONS ====================
 function showToast(message, type = 'info') {
     const toast = document.getElementById('toast');
-    toast.textContent = message;
-    toast.className = `toast ${type} show`;
-    
-    setTimeout(() => {
-        toast.classList.remove('show');
-    }, 3000);
+    if(toast) {
+        toast.textContent = message;
+        toast.className = `toast ${type} show`;
+        
+        // Auto hide after 3 seconds
+        setTimeout(() => {
+            toast.classList.remove('show');
+        }, 3000);
+    }
 }
 
 function showLoading() {
-    document.getElementById('loadingOverlay').classList.add('show');
+    const loader = document.getElementById('loadingOverlay');
+    if(loader) loader.classList.add('show');
 }
 
 function hideLoading() {
-    document.getElementById('loadingOverlay').classList.remove('show');
+    const loader = document.getElementById('loadingOverlay');
+    if(loader) loader.classList.remove('show');
 }
 
 // ==================== USER PROFILE ====================
@@ -44,6 +46,11 @@ async function loadUserProfile() {
             const profile = await response.json();
             currentUser = profile;
             updateProfileUI(profile);
+            
+            // Load initial data after profile is set
+            loadSubjects(); 
+            loadRecommendations();
+            loadBookmarks();
         } else {
             console.error('Failed to load profile');
         }
@@ -56,58 +63,56 @@ function updateProfileUI(profile) {
     document.getElementById('userName').textContent = profile.username;
     document.getElementById('welcomeName').textContent = profile.username;
     
-    // Update Stats
+    // Stats
     document.getElementById('streakDays').textContent = `${profile.streak_days || 0} days`;
     document.getElementById('streakCount').textContent = profile.streak_days || 0;
-    document.getElementById('overallProgress').textContent = `${Math.round(profile.overall_progress || 0)}%`;
-    document.getElementById('completedTopics').textContent = profile.completed_topics || 0;
-    document.getElementById('avgScore').textContent = `${Math.round(profile.avg_score || 0)}%`;
     
-    // Calculate hours from minutes (assuming backend sends minutes/seconds)
-    // Adjust based on your backend logic. Code assumes seconds for safety
-    const hours = Math.round((profile.total_time || 0) / 3600);
-    document.getElementById('totalTime').textContent = `${hours}h`;
+    // Set Global Semester
+    if (!currentSemester || currentSemester === 1) {
+        currentSemester = profile.current_semester || 1;
+    }
     
-    currentSemester = profile.current_semester || 1;
-    
-    // Set dropdowns
+    syncDropdowns(currentSemester);
+}
+
+function syncDropdowns(semester) {
     const semSelect = document.getElementById('semesterSelect');
-    if(semSelect) semSelect.value = currentSemester;
+    if(semSelect) semSelect.value = semester;
     
     const filterSelect = document.getElementById('subjectSemesterFilter');
-    if(filterSelect) filterSelect.value = currentSemester;
+    if(filterSelect) filterSelect.value = semester;
     
     const settingsSelect = document.getElementById('settingsSemester');
-    if(settingsSelect) settingsSelect.value = currentSemester;
+    if(settingsSelect) settingsSelect.value = semester;
 }
 
 // ==================== NAVIGATION ====================
 function toggleSidebar() {
-    document.getElementById('sidebar').classList.toggle('show');
+    const sidebar = document.getElementById('sidebar');
+    if(sidebar) sidebar.classList.toggle('show');
 }
 
 function showSection(sectionName) {
-    // 1. Hide all sections
+    // Hide all sections
     document.querySelectorAll('.content-section').forEach(section => {
         section.classList.remove('active');
     });
     
-    // 2. Show selected section
+    // Show selected section
     const target = document.getElementById(`section-${sectionName}`);
     if (target) {
         target.classList.add('active');
     }
     
-    // 3. Update Sidebar Active State
+    // Update Sidebar Active State
     document.querySelectorAll('.nav-item').forEach(item => {
         item.classList.remove('active');
-        // Match nav item by onclick text or checking if it triggered the event
         if (item.getAttribute('onclick') && item.getAttribute('onclick').includes(sectionName)) {
             item.classList.add('active');
         }
     });
 
-    // 4. Update Header Title
+    // Update Header Title
     const titles = {
         'overview': 'Dashboard Overview',
         'subjects': 'My Subjects',
@@ -118,25 +123,48 @@ function showSection(sectionName) {
         'bookmarks': 'My Bookmarks',
         'settings': 'Settings'
     };
-    document.getElementById('pageTitle').textContent = titles[sectionName] || 'Dashboard';
+    const pageTitle = document.getElementById('pageTitle');
+    if(pageTitle) pageTitle.textContent = titles[sectionName] || 'Dashboard';
     
-    // 5. Trigger Data Reloads
+    // Trigger Data Reloads based on section
     if (sectionName === 'subjects') loadSubjects();
-    if (sectionName === 'progress') loadAnalytics();
+    if (sectionName === 'progress') loadAnalytics(currentSemester);
     if (sectionName === 'recommendations') loadRecommendations();
     if (sectionName === 'bookmarks') loadBookmarks();
     
     // Close mobile sidebar
     if (window.innerWidth < 1024) {
-        document.getElementById('sidebar').classList.remove('show');
+        const sidebar = document.getElementById('sidebar');
+        if(sidebar) sidebar.classList.remove('show');
     }
 }
 
-// ==================== SUBJECTS ====================
+// ==================== SUBJECTS & ANALYTICS INTEGRATION ====================
 async function loadSubjects() {
-    const semester = document.getElementById('semesterSelect')?.value || 
-                    document.getElementById('subjectSemesterFilter')?.value || 
-                    currentSemester;
+    let semester = currentSemester;
+
+    // Determine active dropdown value
+    const overviewSection = document.getElementById('section-overview');
+    const subjectsSection = document.getElementById('section-subjects');
+
+    if (subjectsSection && subjectsSection.classList.contains('active')) {
+        const val = document.getElementById('subjectSemesterFilter')?.value;
+        if(val) semester = parseInt(val);
+    } else if (overviewSection && overviewSection.classList.contains('active')) {
+        const val = document.getElementById('semesterSelect')?.value;
+        if(val) semester = parseInt(val);
+    } else {
+        // Fallback checks
+        const val = document.getElementById('subjectSemesterFilter')?.value || 
+                    document.getElementById('semesterSelect')?.value;
+        if(val) semester = parseInt(val);
+    }
+    
+    // Update global state if changed
+    if(semester !== currentSemester) {
+        currentSemester = semester;
+        syncDropdowns(semester);
+    }
     
     showLoading();
     
@@ -146,6 +174,10 @@ async function loadSubjects() {
         
         currentSubjects = subjects;
         displaySubjects(subjects);
+
+        // Load Analytics for the selected semester
+        loadAnalytics(semester);
+
     } catch (error) {
         console.error('Error loading subjects:', error);
         showToast('Failed to load subjects', 'error');
@@ -157,13 +189,12 @@ async function loadSubjects() {
 function displaySubjects(subjects) {
     const container = document.getElementById('subjectsList');
     
-    if (subjects.length === 0) {
+    if (!subjects || subjects.length === 0) {
         container.innerHTML = '<p class="text-muted">No subjects found for this semester</p>';
         return;
     }
     
     container.innerHTML = subjects.map(subject => {
-        // Calculate progress percentage securely
         const progress = subject.total_topics > 0 
             ? Math.round((subject.completed / subject.total_topics) * 100) 
             : 0;
@@ -230,7 +261,7 @@ function displayTopics(subjectId, topics) {
                                     <i class="fas fa-video"></i> Resources
                                 </button>
                                 <button onclick="startQuiz(${topic.id})" class="btn-small btn-primary">
-                                    <i class="fas fa-question-circle"></i> Quiz
+                                    <i class="fas fa-brain"></i> AI Quiz
                                 </button>
                             </div>
                         </div>
@@ -241,6 +272,7 @@ function displayTopics(subjectId, topics) {
     `;
     
     document.body.appendChild(modal);
+    // Add styles dynamically if not present
     addModalStyles();
 }
 
@@ -295,34 +327,57 @@ function initializeCharts() {
     }
 }
 
-async function loadAnalytics() {
+async function loadAnalytics(semester = currentSemester) {
     try {
-        const response = await fetch('/api/progress/analytics');
+        const response = await fetch(`/api/progress/analytics?semester=${semester}`);
         const analytics = await response.json();
         
         if (response.ok) {
             updateAnalyticsCharts(analytics);
+            updateSemesterStats(analytics.semester_stats);
         }
     } catch (error) {
         console.error('Error loading analytics:', error);
     }
 }
 
+function updateSemesterStats(stats) {
+    if (!stats) return;
+
+    // Time Formatting
+    const hours = Math.floor((stats.total_time || 0) / 3600);
+    const mins = Math.floor(((stats.total_time || 0) % 3600) / 60);
+    const timeElem = document.getElementById('totalTime');
+    if(timeElem) timeElem.textContent = `${hours}h ${mins}m`;
+
+    // Progress Update
+    const completedElem = document.getElementById('completedTopics');
+    if(completedElem) completedElem.textContent = stats.completed_topics || 0;
+
+    const percentage = stats.total_topics > 0 
+        ? Math.round((stats.completed_topics / stats.total_topics) * 100) 
+        : 0;
+    
+    const progressElem = document.getElementById('overallProgress');
+    if(progressElem) progressElem.textContent = `${percentage}%`;
+}
+
 function updateAnalyticsCharts(analytics) {
-    // 1. Update Pie Chart (Overview)
-    if (charts.progress && currentUser) {
-        const total = analytics.subject_progress.reduce((sum, item) => sum + item.total_topics, 0);
-        const completed = currentUser.completed_topics || 0;
+    // Pie Chart
+    if (charts.progress) {
+        let total = 0, completed = 0;
+        if (analytics.semester_stats) {
+             total = analytics.semester_stats.total_topics || 0;
+             completed = analytics.semester_stats.completed_topics || 0;
+        }
         const remaining = Math.max(0, total - completed);
-        
         charts.progress.data.datasets[0].data = [completed, remaining];
         charts.progress.update();
     }
 
-    // 2. Performance Trend Line Chart
+    // Trend Chart
     const trendCtx = document.getElementById('performanceTrendChart');
     if (trendCtx && analytics.performance_trend) {
-        // Destroy existing chart if it exists to avoid overlap
         if (charts.trend) charts.trend.destroy();
 
         const dates = analytics.performance_trend.map(item => item.date);
@@ -333,7 +388,7 @@ function updateAnalyticsCharts(analytics) {
             data: {
                 labels: dates,
                 datasets: [{
-                    label: 'Average Score',
+                    label: 'Avg Score (Selected Sem)',
                     data: scores,
                     borderColor: '#667eea',
                     backgroundColor: 'rgba(102, 126, 234, 0.1)',
@@ -348,7 +403,7 @@ function updateAnalyticsCharts(analytics) {
         });
     }
     
-    // 3. Subject Progress Bar Chart
+    // Subject Chart
     const subjectCtx = document.getElementById('subjectProgressChart');
     if (subjectCtx && analytics.subject_progress) {
         if (charts.subjects) charts.subjects.destroy();
@@ -376,7 +431,7 @@ function updateAnalyticsCharts(analytics) {
         });
     }
 
-    // 4. Update Table
+    // Analytics Table
     const tableContainer = document.getElementById('analyticsTable');
     if (tableContainer && analytics.subject_progress) {
         tableContainer.innerHTML = `
@@ -443,7 +498,6 @@ function displayRecommendations(data) {
             </div>`;
     }
 
-    // Weak Areas
     if (data.weak_areas && data.weak_areas.length > 0) {
         html += `
             <div class="card mb-3">
@@ -466,9 +520,9 @@ function displayRecommendations(data) {
     container.innerHTML = html || '<p class="text-muted">No specific recommendations yet. Keep learning!</p>';
 }
 
-// ==================== RESOURCES & QUIZ ====================
+// ==================== RESOURCES ====================
 async function viewResources(topicId) {
-    closeModal(); // Close topic list if open
+    closeModal();
     showSection('resources');
     showLoading();
     
@@ -485,7 +539,7 @@ async function viewResources(topicId) {
 
 function displayResources(resources) {
     const container = document.getElementById('resourcesList');
-    if (resources.length === 0) {
+    if (!resources || resources.length === 0) {
         container.innerHTML = '<p class="text-muted">No resources found for this topic.</p>';
         return;
     }
@@ -507,7 +561,7 @@ function displayResources(resources) {
         </div>`;
 }
 
-// ==================== QUIZ LOGIC ====================
+// ==================== QUIZ LOGIC (AI INTEGRATED) ====================
 let currentQuiz = null;
 let currentQuestionIndex = 0;
 let userAnswers = [];
@@ -516,20 +570,24 @@ let quizStartTime = 0;
 
 async function startQuiz(topicId) {
     showLoading();
+    showToast('Generative AI is creating your quiz...', 'info'); // UI Feedback for AI Delay
     closeModal();
+    
     try {
         const response = await fetch(`/api/quiz/${topicId}`);
+        if (!response.ok) throw new Error('Quiz failed to load');
+        
         currentQuiz = await response.json();
         
-        if (response.ok) {
-            showSection('quiz');
-            currentQuestionIndex = 0;
-            userAnswers = new Array(currentQuiz.questions.length).fill(null);
-            quizStartTime = Date.now();
-            renderQuizQuestion();
-        }
+        showSection('quiz');
+        currentQuestionIndex = 0;
+        userAnswers = new Array(currentQuiz.questions.length).fill(null);
+        quizStartTime = Date.now();
+        renderQuizQuestion();
+        
     } catch (error) {
         console.error('Error starting quiz:', error);
+        showToast('Failed to generate quiz. Please try again.', 'error');
     } finally {
         hideLoading();
     }
@@ -537,6 +595,8 @@ async function startQuiz(topicId) {
 
 function renderQuizQuestion() {
     const container = document.getElementById('quizContainer');
+    if(!container || !currentQuiz) return;
+
     const question = currentQuiz.questions[currentQuestionIndex];
     
     container.innerHTML = `
@@ -591,7 +651,7 @@ window.selectOption = (idx) => {
         selected: idx,
         is_correct: idx === currentQuiz.questions[currentQuestionIndex].correct_answer
     };
-    renderQuizQuestion(); // Re-render to show selection
+    renderQuizQuestion();
 };
 
 window.nextQuestion = () => {
@@ -631,6 +691,7 @@ async function submitQuiz() {
         displayQuizResult(result);
     } catch (error) {
         console.error('Submit failed:', error);
+        showToast('Error submitting quiz', 'error');
     } finally {
         hideLoading();
     }
@@ -651,11 +712,10 @@ function displayQuizResult(result) {
             </div>
         </div>
     `;
-    // Refresh profile stats
-    loadUserProfile(); 
+    loadAnalytics(currentSemester);
 }
 
-// ==================== BOOKMARKS ====================
+// ==================== BOOKMARKS & SETTINGS ====================
 async function loadBookmarks() {
     try {
         const response = await fetch('/api/bookmarks');
@@ -702,7 +762,6 @@ async function removeBookmark(id) {
     showToast('Removed', 'info');
 }
 
-// ==================== SETTINGS ====================
 async function updateSettings(event) {
     event.preventDefault();
     const sem = document.getElementById('settingsSemester').value;
@@ -712,7 +771,9 @@ async function updateSettings(event) {
         body: JSON.stringify({semester: sem})
     });
     showToast('Settings Saved', 'success');
-    loadUserProfile();
+    currentSemester = parseInt(sem);
+    syncDropdowns(currentSemester);
+    loadSubjects(); // Reload everything for new semester setting
 }
 
 function toggleTheme() {
