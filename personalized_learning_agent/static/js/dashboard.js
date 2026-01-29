@@ -9,9 +9,12 @@ document.addEventListener('DOMContentLoaded', () => {
     loadUserProfile();
     loadSubjects();
     initializeCharts();
-    loadAnalytics();
+    loadAnalytics(); // Load charts data immediately
     loadRecommendations();
     loadBookmarks();
+    
+    // Set default active section safely
+    showSection('overview');
 });
 
 // ==================== UTILITY FUNCTIONS ====================
@@ -37,11 +40,12 @@ function hideLoading() {
 async function loadUserProfile() {
     try {
         const response = await fetch('/api/profile');
-        const profile = await response.json();
-        
         if (response.ok) {
+            const profile = await response.json();
             currentUser = profile;
             updateProfileUI(profile);
+        } else {
+            console.error('Failed to load profile');
         }
     } catch (error) {
         console.error('Error loading profile:', error);
@@ -51,17 +55,30 @@ async function loadUserProfile() {
 function updateProfileUI(profile) {
     document.getElementById('userName').textContent = profile.username;
     document.getElementById('welcomeName').textContent = profile.username;
-    document.getElementById('streakDays').textContent = `${profile.streak_days} days`;
-    document.getElementById('streakCount').textContent = profile.streak_days;
+    
+    // Update Stats
+    document.getElementById('streakDays').textContent = `${profile.streak_days || 0} days`;
+    document.getElementById('streakCount').textContent = profile.streak_days || 0;
     document.getElementById('overallProgress').textContent = `${Math.round(profile.overall_progress || 0)}%`;
     document.getElementById('completedTopics').textContent = profile.completed_topics || 0;
     document.getElementById('avgScore').textContent = `${Math.round(profile.avg_score || 0)}%`;
-    document.getElementById('totalTime').textContent = `${Math.round((profile.total_time || 0) / 60)}h`;
+    
+    // Calculate hours from minutes (assuming backend sends minutes/seconds)
+    // Adjust based on your backend logic. Code assumes seconds for safety
+    const hours = Math.round((profile.total_time || 0) / 3600);
+    document.getElementById('totalTime').textContent = `${hours}h`;
     
     currentSemester = profile.current_semester || 1;
-    document.getElementById('semesterSelect').value = currentSemester;
-    document.getElementById('subjectSemesterFilter').value = currentSemester;
-    document.getElementById('settingsSemester').value = currentSemester;
+    
+    // Set dropdowns
+    const semSelect = document.getElementById('semesterSelect');
+    if(semSelect) semSelect.value = currentSemester;
+    
+    const filterSelect = document.getElementById('subjectSemesterFilter');
+    if(filterSelect) filterSelect.value = currentSemester;
+    
+    const settingsSelect = document.getElementById('settingsSemester');
+    if(settingsSelect) settingsSelect.value = currentSemester;
 }
 
 // ==================== NAVIGATION ====================
@@ -70,21 +87,27 @@ function toggleSidebar() {
 }
 
 function showSection(sectionName) {
-    // Hide all sections
+    // 1. Hide all sections
     document.querySelectorAll('.content-section').forEach(section => {
         section.classList.remove('active');
     });
     
-    // Show selected section
-    document.getElementById(`section-${sectionName}`).classList.add('active');
+    // 2. Show selected section
+    const target = document.getElementById(`section-${sectionName}`);
+    if (target) {
+        target.classList.add('active');
+    }
     
-    // Update active nav item
+    // 3. Update Sidebar Active State
     document.querySelectorAll('.nav-item').forEach(item => {
         item.classList.remove('active');
+        // Match nav item by onclick text or checking if it triggered the event
+        if (item.getAttribute('onclick') && item.getAttribute('onclick').includes(sectionName)) {
+            item.classList.add('active');
+        }
     });
-    event.target.closest('.nav-item').classList.add('active');
-    
-    // Update page title
+
+    // 4. Update Header Title
     const titles = {
         'overview': 'Dashboard Overview',
         'subjects': 'My Subjects',
@@ -95,18 +118,13 @@ function showSection(sectionName) {
         'bookmarks': 'My Bookmarks',
         'settings': 'Settings'
     };
-    document.getElementById('pageTitle').textContent = titles[sectionName];
+    document.getElementById('pageTitle').textContent = titles[sectionName] || 'Dashboard';
     
-    // Load section-specific data
-    if (sectionName === 'subjects') {
-        loadSubjects();
-    } else if (sectionName === 'progress') {
-        loadAnalytics();
-    } else if (sectionName === 'recommendations') {
-        loadRecommendations();
-    } else if (sectionName === 'bookmarks') {
-        loadBookmarks();
-    }
+    // 5. Trigger Data Reloads
+    if (sectionName === 'subjects') loadSubjects();
+    if (sectionName === 'progress') loadAnalytics();
+    if (sectionName === 'recommendations') loadRecommendations();
+    if (sectionName === 'bookmarks') loadBookmarks();
     
     // Close mobile sidebar
     if (window.innerWidth < 1024) {
@@ -144,7 +162,13 @@ function displaySubjects(subjects) {
         return;
     }
     
-    container.innerHTML = subjects.map(subject => `
+    container.innerHTML = subjects.map(subject => {
+        // Calculate progress percentage securely
+        const progress = subject.total_topics > 0 
+            ? Math.round((subject.completed / subject.total_topics) * 100) 
+            : 0;
+
+        return `
         <div class="subject-card" onclick="viewSubject(${subject.id})">
             <div class="subject-header">
                 <div class="subject-icon">
@@ -155,21 +179,20 @@ function displaySubjects(subjects) {
             <p class="subject-description">${subject.description}</p>
             <div class="subject-progress">
                 <div class="progress-bar">
-                    <div class="progress-fill" style="width: 0%"></div>
+                    <div class="progress-fill" style="width: ${progress}%"></div>
                 </div>
-                <p class="progress-text">0/${subject.total_topics} topics completed</p>
+                <p class="progress-text">${subject.completed || 0}/${subject.total_topics} topics completed</p>
             </div>
         </div>
-    `).join('');
+        `;
+    }).join('');
 }
 
 async function viewSubject(subjectId) {
     showLoading();
-    
     try {
         const response = await fetch(`/api/subjects/${subjectId}/topics`);
         const topics = await response.json();
-        
         displayTopics(subjectId, topics);
     } catch (error) {
         console.error('Error loading topics:', error);
@@ -187,7 +210,7 @@ function displayTopics(subjectId, topics) {
     modal.innerHTML = `
         <div class="modal-content">
             <div class="modal-header">
-                <h2>${subject.name}</h2>
+                <h2>${subject ? subject.name : 'Topics'}</h2>
                 <button onclick="closeModal()" class="close-btn">
                     <i class="fas fa-times"></i>
                 </button>
@@ -200,13 +223,14 @@ function displayTopics(subjectId, topics) {
                                 <h4>${topic.name}</h4>
                                 <p>${topic.description}</p>
                                 <span class="badge ${topic.difficulty}">${topic.difficulty}</span>
+                                ${topic.user_status === 'completed' ? '<span class="badge" style="background:#d1fae5; color:#065f46">Completed</span>' : ''}
                             </div>
                             <div class="topic-actions">
                                 <button onclick="viewResources(${topic.id})" class="btn-small">
                                     <i class="fas fa-video"></i> Resources
                                 </button>
                                 <button onclick="startQuiz(${topic.id})" class="btn-small btn-primary">
-                                    <i class="fas fa-question-circle"></i> Take Quiz
+                                    <i class="fas fa-question-circle"></i> Quiz
                                 </button>
                             </div>
                         </div>
@@ -217,164 +241,55 @@ function displayTopics(subjectId, topics) {
     `;
     
     document.body.appendChild(modal);
-    
-    // Add styles for modal
     addModalStyles();
 }
 
 function closeModal() {
     const modal = document.querySelector('.modal-overlay');
-    if (modal) {
-        modal.remove();
-    }
+    if (modal) modal.remove();
 }
 
 function addModalStyles() {
     if (document.getElementById('modalStyles')) return;
-    
     const style = document.createElement('style');
     style.id = 'modalStyles';
     style.textContent = `
-        .modal-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.5);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 1000;
-            animation: fadeIn 0.3s ease;
-        }
-        
-        .modal-content {
-            background: white;
-            border-radius: 1rem;
-            max-width: 800px;
-            width: 90%;
-            max-height: 80vh;
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-            animation: slideUp 0.3s ease;
-        }
-        
-        .modal-header {
-            padding: 1.5rem;
-            border-bottom: 1px solid var(--border-color);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        
-        .close-btn {
-            background: none;
-            border: none;
-            font-size: 1.5rem;
-            cursor: pointer;
-            color: var(--text-secondary);
-        }
-        
-        .modal-body {
-            padding: 1.5rem;
-            overflow-y: auto;
-        }
-        
-        .topics-list {
-            display: flex;
-            flex-direction: column;
-            gap: 1rem;
-        }
-        
-        .topic-item {
-            padding: 1rem;
-            background: var(--gray-50);
-            border-radius: 0.5rem;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 1rem;
-        }
-        
-        .topic-info h4 {
-            margin-bottom: 0.5rem;
-        }
-        
-        .topic-info p {
-            color: var(--text-secondary);
-            font-size: 0.875rem;
-            margin-bottom: 0.5rem;
-        }
-        
-        .badge {
-            padding: 0.25rem 0.75rem;
-            border-radius: 1rem;
-            font-size: 0.75rem;
-            font-weight: 600;
-            text-transform: uppercase;
-        }
-        
+        .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; animation: fadeIn 0.3s ease; }
+        .modal-content { background: white; border-radius: 1rem; max-width: 800px; width: 90%; max-height: 80vh; overflow: hidden; display: flex; flex-direction: column; animation: slideUp 0.3s ease; }
+        .modal-header { padding: 1.5rem; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; }
+        .close-btn { background: none; border: none; font-size: 1.5rem; cursor: pointer; color: var(--text-secondary); }
+        .modal-body { padding: 1.5rem; overflow-y: auto; }
+        .topics-list { display: flex; flex-direction: column; gap: 1rem; }
+        .topic-item { padding: 1rem; background: var(--gray-50); border-radius: 0.5rem; display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+        .badge { padding: 0.25rem 0.75rem; border-radius: 1rem; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; margin-right: 5px; }
         .badge.beginner { background: #dbeafe; color: #1e40af; }
         .badge.intermediate { background: #fef3c7; color: #92400e; }
         .badge.advanced { background: #fee2e2; color: #991b1b; }
-        
-        .topic-actions {
-            display: flex;
-            gap: 0.5rem;
-        }
-        
-        .btn-small {
-            padding: 0.5rem 1rem;
-            border: 1px solid var(--border-color);
-            background: white;
-            border-radius: 0.5rem;
-            cursor: pointer;
-            transition: var(--transition);
-            font-family: inherit;
-        }
-        
-        .btn-small:hover {
-            background: var(--gray-100);
-        }
-        
-        .btn-small.btn-primary {
-            background: var(--primary);
-            color: white;
-            border-color: var(--primary);
-        }
-        
-        .btn-small.btn-primary:hover {
-            background: var(--primary-dark);
-        }
+        .topic-actions { display: flex; gap: 0.5rem; }
+        .btn-small { padding: 0.5rem 1rem; border: 1px solid var(--border-color); background: white; border-radius: 0.5rem; cursor: pointer; transition: var(--transition); }
+        .btn-small:hover { background: var(--gray-100); }
+        .btn-small.btn-primary { background: var(--primary); color: white; border-color: var(--primary); }
     `;
-    
     document.head.appendChild(style);
 }
 
 // ==================== CHARTS ====================
 function initializeCharts() {
-    // Progress Chart
     const progressCtx = document.getElementById('progressChart');
     if (progressCtx) {
         charts.progress = new Chart(progressCtx, {
             type: 'doughnut',
             data: {
-                labels: ['Completed', 'In Progress', 'Not Started'],
+                labels: ['Completed', 'Pending'],
                 datasets: [{
-                    data: [0, 0, 100],
-                    backgroundColor: ['#10b981', '#f59e0b', '#e5e7eb']
+                    data: [0, 100],
+                    backgroundColor: ['#10b981', '#e5e7eb']
                 }]
             },
             options: {
                 responsive: true,
-                maintainAspectRatio: true,
-                plugins: {
-                    legend: {
-                        position: 'bottom'
-                    }
-                }
+                maintainAspectRatio: false,
+                plugins: { legend: { position: 'bottom' } }
             }
         });
     }
@@ -394,13 +309,26 @@ async function loadAnalytics() {
 }
 
 function updateAnalyticsCharts(analytics) {
-    // Performance Trend Chart
+    // 1. Update Pie Chart (Overview)
+    if (charts.progress && currentUser) {
+        const total = analytics.subject_progress.reduce((sum, item) => sum + item.total_topics, 0);
+        const completed = currentUser.completed_topics || 0;
+        const remaining = Math.max(0, total - completed);
+        
+        charts.progress.data.datasets[0].data = [completed, remaining];
+        charts.progress.update();
+    }
+
+    // 2. Performance Trend Line Chart
     const trendCtx = document.getElementById('performanceTrendChart');
     if (trendCtx && analytics.performance_trend) {
+        // Destroy existing chart if it exists to avoid overlap
+        if (charts.trend) charts.trend.destroy();
+
         const dates = analytics.performance_trend.map(item => item.date);
         const scores = analytics.performance_trend.map(item => item.avg_score);
         
-        new Chart(trendCtx, {
+        charts.trend = new Chart(trendCtx, {
             type: 'line',
             data: {
                 labels: dates,
@@ -409,62 +337,46 @@ function updateAnalyticsCharts(analytics) {
                     data: scores,
                     borderColor: '#667eea',
                     backgroundColor: 'rgba(102, 126, 234, 0.1)',
-                    tension: 0.4
+                    tension: 0.4,
+                    fill: true
                 }]
             },
             options: {
                 responsive: true,
-                plugins: {
-                    legend: {
-                        display: true
-                    }
-                },
-                scales: {
-                    y: {
-                        beginAtZero: true,
-                        max: 100
-                    }
-                }
+                scales: { y: { beginAtZero: true, max: 100 } }
             }
         });
     }
     
-    // Subject Progress Chart
+    // 3. Subject Progress Bar Chart
     const subjectCtx = document.getElementById('subjectProgressChart');
     if (subjectCtx && analytics.subject_progress) {
+        if (charts.subjects) charts.subjects.destroy();
+
         const subjects = analytics.subject_progress.map(item => item.subject);
         const progress = analytics.subject_progress.map(item => 
-            (item.completed / item.total_topics) * 100
+            item.total_topics > 0 ? (item.completed / item.total_topics) * 100 : 0
         );
         
-        new Chart(subjectCtx, {
+        charts.subjects = new Chart(subjectCtx, {
             type: 'bar',
             data: {
                 labels: subjects,
                 datasets: [{
                     label: 'Progress (%)',
                     data: progress,
-                    backgroundColor: '#667eea'
+                    backgroundColor: '#667eea',
+                    borderRadius: 4
                 }]
             },
             options: {
                 responsive: true,
-                plugins: {
-                    legend: {
-                        display: false
-                    }
-                },
-                scales: {
-                    y: {
-                        beginAtZero: true,
-                        max: 100
-                    }
-                }
+                scales: { y: { beginAtZero: true, max: 100 } }
             }
         });
     }
-    
-    // Analytics Table
+
+    // 4. Update Table
     const tableContainer = document.getElementById('analyticsTable');
     if (tableContainer && analytics.subject_progress) {
         tableContainer.innerHTML = `
@@ -472,7 +384,6 @@ function updateAnalyticsCharts(analytics) {
                 <thead>
                     <tr>
                         <th>Subject</th>
-                        <th>Total Topics</th>
                         <th>Completed</th>
                         <th>Avg Score</th>
                         <th>Progress</th>
@@ -482,12 +393,11 @@ function updateAnalyticsCharts(analytics) {
                     ${analytics.subject_progress.map(item => `
                         <tr>
                             <td>${item.subject}</td>
-                            <td>${item.total_topics}</td>
-                            <td>${item.completed || 0}</td>
+                            <td>${item.completed}/${item.total_topics}</td>
                             <td>${Math.round(item.avg_score || 0)}%</td>
                             <td>
                                 <div class="progress-bar">
-                                    <div class="progress-fill" style="width: ${(item.completed / item.total_topics) * 100}%"></div>
+                                    <div class="progress-fill" style="width: ${item.total_topics > 0 ? (item.completed / item.total_topics)*100 : 0}%"></div>
                                 </div>
                             </td>
                         </tr>
@@ -501,7 +411,6 @@ function updateAnalyticsCharts(analytics) {
 // ==================== RECOMMENDATIONS ====================
 async function loadRecommendations() {
     showLoading();
-    
     try {
         const response = await fetch('/api/recommendations');
         const data = await response.json();
@@ -511,7 +420,6 @@ async function loadRecommendations() {
         }
     } catch (error) {
         console.error('Error loading recommendations:', error);
-        showToast('Failed to load recommendations', 'error');
     } finally {
         hideLoading();
     }
@@ -519,35 +427,27 @@ async function loadRecommendations() {
 
 function displayRecommendations(data) {
     const container = document.getElementById('recommendationsContainer');
-    
     let html = '';
     
-    // AI Recommendations
     if (data.recommendations && data.recommendations.length > 0) {
         html += `
-            <div class="card">
-                <div class="card-header">
-                    <h3><i class="fas fa-brain"></i> AI Recommendations</h3>
-                </div>
+            <div class="card mb-3">
+                <div class="card-header"><h3><i class="fas fa-brain"></i> AI Suggestions</h3></div>
                 <div class="card-body">
                     ${data.recommendations.map(rec => `
                         <div class="recommendation-item ${rec.priority}">
-                            <i class="fas fa-${rec.type === 'revision' ? 'redo' : rec.type === 'progress' ? 'forward' : 'check'}"></i>
-                            <p>${rec.message}</p>
+                            <i class="fas fa-lightbulb"></i> <p>${rec.message}</p>
                         </div>
                     `).join('')}
                 </div>
-            </div>
-        `;
+            </div>`;
     }
-    
+
     // Weak Areas
     if (data.weak_areas && data.weak_areas.length > 0) {
         html += `
-            <div class="card">
-                <div class="card-header">
-                    <h3><i class="fas fa-exclamation-triangle"></i> Areas to Improve</h3>
-                </div>
+            <div class="card mb-3">
+                <div class="card-header"><h3><i class="fas fa-exclamation-triangle"></i> Focus Areas (Weak Topics)</h3></div>
                 <div class="card-body">
                     <div class="topics-grid">
                         ${data.weak_areas.map(topic => `
@@ -555,60 +455,29 @@ function displayRecommendations(data) {
                                 <h4>${topic.name}</h4>
                                 <p>${topic.subject_name}</p>
                                 <div class="score">Score: ${Math.round(topic.score)}%</div>
-                                <button onclick="viewResources(${topic.id})" class="btn-small">
-                                    Review Materials
-                                </button>
+                                <button onclick="viewResources(${topic.id})" class="btn-small">Review</button>
                             </div>
                         `).join('')}
                     </div>
                 </div>
-            </div>
-        `;
+            </div>`;
     }
     
-    // Next Topics
-    if (data.next_topics && data.next_topics.length > 0) {
-        html += `
-            <div class="card">
-                <div class="card-header">
-                    <h3><i class="fas fa-forward"></i> Recommended Next Topics</h3>
-                </div>
-                <div class="card-body">
-                    <div class="topics-grid">
-                        ${data.next_topics.map(topic => `
-                            <div class="topic-card next">
-                                <h4>${topic.name}</h4>
-                                <p>${topic.subject_name}</p>
-                                <span class="badge ${topic.difficulty}">${topic.difficulty}</span>
-                                <button onclick="startQuiz(${topic.id})" class="btn-small btn-primary">
-                                    Start Learning
-                                </button>
-                            </div>
-                        `).join('')}
-                    </div>
-                </div>
-            </div>
-        `;
-    }
-    
-    container.innerHTML = html || '<p class="text-muted">No recommendations available</p>';
+    container.innerHTML = html || '<p class="text-muted">No specific recommendations yet. Keep learning!</p>';
 }
 
-// ==================== RESOURCES ====================
+// ==================== RESOURCES & QUIZ ====================
 async function viewResources(topicId) {
+    closeModal(); // Close topic list if open
+    showSection('resources');
     showLoading();
     
     try {
-        const language = document.getElementById('resourceLanguage')?.value || 'english';
-        const type = document.getElementById('resourceType')?.value || '';
-        
-        const response = await fetch(`/api/topics/${topicId}/resources?language=${language}&type=${type}`);
+        const response = await fetch(`/api/topics/${topicId}/resources`);
         const resources = await response.json();
-        
         displayResources(resources);
     } catch (error) {
         console.error('Error loading resources:', error);
-        showToast('Failed to load resources', 'error');
     } finally {
         hideLoading();
     }
@@ -616,9 +485,8 @@ async function viewResources(topicId) {
 
 function displayResources(resources) {
     const container = document.getElementById('resourcesList');
-    
     if (resources.length === 0) {
-        container.innerHTML = '<p class="text-muted">No resources found</p>';
+        container.innerHTML = '<p class="text-muted">No resources found for this topic.</p>';
         return;
     }
     
@@ -630,355 +498,228 @@ function displayResources(resources) {
                         <i class="fas fa-${resource.type === 'video' ? 'play-circle' : 'file-alt'}"></i>
                     </div>
                     <h4>${resource.title}</h4>
-                    <div class="resource-meta">
-                        <span class="badge">${resource.type}</span>
-                        <span class="badge">${resource.language}</span>
-                        <span class="badge">${resource.difficulty}</span>
-                    </div>
                     <div class="resource-actions">
-                        <a href="${resource.url}" target="_blank" class="btn-small btn-primary">
-                            <i class="fas fa-external-link-alt"></i> Open
-                        </a>
-                        <button onclick="bookmarkResource(${resource.id})" class="btn-small">
-                            <i class="fas fa-bookmark"></i>
-                        </button>
+                        <a href="${resource.url}" target="_blank" class="btn-small btn-primary">Open</a>
+                        <button onclick="bookmarkResource(${resource.id})" class="btn-small"><i class="fas fa-bookmark"></i></button>
                     </div>
                 </div>
             `).join('')}
-        </div>
-    `;
+        </div>`;
 }
 
-// ==================== QUIZ ====================
+// ==================== QUIZ LOGIC ====================
+let currentQuiz = null;
+let currentQuestionIndex = 0;
+let userAnswers = [];
+let quizTimer = null;
+let quizStartTime = 0;
+
 async function startQuiz(topicId) {
     showLoading();
-    
+    closeModal();
     try {
         const response = await fetch(`/api/quiz/${topicId}`);
-        const quiz = await response.json();
+        currentQuiz = await response.json();
         
         if (response.ok) {
-            displayQuiz(quiz);
+            showSection('quiz');
+            currentQuestionIndex = 0;
+            userAnswers = new Array(currentQuiz.questions.length).fill(null);
+            quizStartTime = Date.now();
+            renderQuizQuestion();
         }
     } catch (error) {
-        console.error('Error loading quiz:', error);
-        showToast('Failed to load quiz', 'error');
+        console.error('Error starting quiz:', error);
     } finally {
         hideLoading();
     }
 }
 
-function displayQuiz(quiz) {
-    // Close modal if open
-    closeModal();
-    
-    // Show quiz section
-    showSection('quiz');
-    
+function renderQuizQuestion() {
     const container = document.getElementById('quizContainer');
+    const question = currentQuiz.questions[currentQuestionIndex];
     
-    let currentQuestion = 0;
-    let answers = [];
-    let startTime = Date.now();
+    container.innerHTML = `
+        <div class="quiz-header">
+            <h2>${currentQuiz.topic_name}</h2>
+            <div class="quiz-meta">
+                <span>Q ${currentQuestionIndex + 1} / ${currentQuiz.questions.length}</span>
+                <span id="quizTimer">00:00</span>
+            </div>
+        </div>
+        <div class="quiz-progress">
+            <div class="progress-bar"><div class="progress-fill" style="width: ${(currentQuestionIndex/currentQuiz.questions.length)*100}%"></div></div>
+        </div>
+        <div class="quiz-question">
+            <h3>${question.question}</h3>
+            <div class="quiz-options">
+                ${question.options.map((opt, idx) => `
+                    <button class="quiz-option ${userAnswers[currentQuestionIndex]?.selected === idx ? 'selected' : ''}" 
+                            onclick="selectOption(${idx})">
+                        <span class="option-letter">${String.fromCharCode(65+idx)}</span>
+                        ${opt}
+                    </button>
+                `).join('')}
+            </div>
+        </div>
+        <div class="quiz-actions">
+            ${currentQuestionIndex > 0 ? `<button onclick="prevQuestion()" class="btn">Previous</button>` : '<div></div>'}
+            <button onclick="nextQuestion()" class="btn btn-primary" id="nextBtn" ${!userAnswers[currentQuestionIndex] ? 'disabled' : ''}>
+                ${currentQuestionIndex === currentQuiz.questions.length - 1 ? 'Submit' : 'Next'}
+            </button>
+        </div>
+    `;
     
-    function renderQuestion() {
-        const question = quiz.questions[currentQuestion];
-        
-        container.innerHTML = `
-            <div class="quiz-header">
-                <h2>${quiz.topic_name}</h2>
-                <div class="quiz-meta">
-                    <span><i class="fas fa-layer-group"></i> ${quiz.difficulty}</span>
-                    <span><i class="fas fa-question-circle"></i> Question ${currentQuestion + 1}/${quiz.questions.length}</span>
-                    <span><i class="fas fa-clock"></i> <span id="timer">00:00</span></span>
-                </div>
-            </div>
-            
-            <div class="quiz-progress">
-                <div class="progress-bar">
-                    <div class="progress-fill" style="width: ${(currentQuestion / quiz.questions.length) * 100}%"></div>
-                </div>
-            </div>
-            
-            <div class="quiz-question">
-                <h3>${question.question}</h3>
-                <div class="quiz-options">
-                    ${question.options.map((option, index) => `
-                        <button class="quiz-option" onclick="selectAnswer(${index})">
-                            <span class="option-letter">${String.fromCharCode(65 + index)}</span>
-                            <span class="option-text">${option}</span>
-                        </button>
-                    `).join('')}
-                </div>
-            </div>
-            
-            <div class="quiz-actions">
-                ${currentQuestion > 0 ? '<button onclick="previousQuestion()" class="btn">Previous</button>' : ''}
-                <button onclick="nextQuestion()" class="btn btn-primary" id="nextBtn" disabled>
-                    ${currentQuestion === quiz.questions.length - 1 ? 'Submit Quiz' : 'Next Question'}
-                </button>
-            </div>
-        `;
-        
-        // Start timer
-        startTimer();
+    startQuizTimer();
+}
+
+function startQuizTimer() {
+    if (quizTimer) clearInterval(quizTimer);
+    const timerEl = document.getElementById('quizTimer');
+    
+    quizTimer = setInterval(() => {
+        const elapsed = Math.floor((Date.now() - quizStartTime) / 1000);
+        const m = Math.floor(elapsed / 60).toString().padStart(2, '0');
+        const s = (elapsed % 60).toString().padStart(2, '0');
+        if(timerEl) timerEl.textContent = `${m}:${s}`;
+    }, 1000);
+}
+
+window.selectOption = (idx) => {
+    userAnswers[currentQuestionIndex] = {
+        question_id: currentQuiz.questions[currentQuestionIndex].id,
+        selected: idx,
+        is_correct: idx === currentQuiz.questions[currentQuestionIndex].correct_answer
+    };
+    renderQuizQuestion(); // Re-render to show selection
+};
+
+window.nextQuestion = () => {
+    if (currentQuestionIndex < currentQuiz.questions.length - 1) {
+        currentQuestionIndex++;
+        renderQuizQuestion();
+    } else {
+        submitQuiz();
     }
-    
-    function startTimer() {
-        const timerElement = document.getElementById('timer');
-        setInterval(() => {
-            const elapsed = Math.floor((Date.now() - startTime) / 1000);
-            const minutes = Math.floor(elapsed / 60);
-            const seconds = elapsed % 60;
-            timerElement.textContent = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-        }, 1000);
+};
+
+window.prevQuestion = () => {
+    if (currentQuestionIndex > 0) {
+        currentQuestionIndex--;
+        renderQuizQuestion();
     }
+};
+
+async function submitQuiz() {
+    clearInterval(quizTimer);
+    showLoading();
     
-    window.selectAnswer = (optionIndex) => {
-        // Remove previous selection
-        document.querySelectorAll('.quiz-option').forEach(opt => {
-            opt.classList.remove('selected');
+    const timeTaken = Math.floor((Date.now() - quizStartTime) / 1000);
+    const payload = {
+        topic_id: currentQuiz.topic_id,
+        answers: userAnswers,
+        time_taken: timeTaken
+    };
+    
+    try {
+        const response = await fetch('/api/quiz/submit', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
         });
-        
-        // Mark as selected
-        document.querySelectorAll('.quiz-option')[optionIndex].classList.add('selected');
-        
-        // Store answer
-        answers[currentQuestion] = {
-            question_id: quiz.questions[currentQuestion].id,
-            selected: optionIndex,
-            is_correct: optionIndex === quiz.questions[currentQuestion].correct_answer
-        };
-        
-        // Enable next button
-        document.getElementById('nextBtn').disabled = false;
-    };
-    
-    window.nextQuestion = () => {
-        if (currentQuestion < quiz.questions.length - 1) {
-            currentQuestion++;
-            renderQuestion();
-        } else {
-            submitQuiz();
-        }
-    };
-    
-    window.previousQuestion = () => {
-        if (currentQuestion > 0) {
-            currentQuestion--;
-            renderQuestion();
-        }
-    };
-    
-    async function submitQuiz() {
-        const timeTaken = Math.floor((Date.now() - startTime) / 1000);
-        
-        showLoading();
-        
-        try {
-            const response = await fetch('/api/quiz/submit', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    topic_id: quiz.topic_id,
-                    answers: answers,
-                    time_taken: timeTaken
-                })
-            });
-            
-            const result = await response.json();
-            
-            if (response.ok) {
-                displayQuizResult(result);
-            }
-        } catch (error) {
-            console.error('Error submitting quiz:', error);
-            showToast('Failed to submit quiz', 'error');
-        } finally {
-            hideLoading();
-        }
+        const result = await response.json();
+        displayQuizResult(result);
+    } catch (error) {
+        console.error('Submit failed:', error);
+    } finally {
+        hideLoading();
     }
-    
-    renderQuestion();
 }
 
 function displayQuizResult(result) {
     const container = document.getElementById('quizContainer');
-    
-    const minutes = Math.floor(result.time_taken / 60);
-    const seconds = result.time_taken % 60;
-    
     container.innerHTML = `
-        <div class="quiz-result">
-            <div class="result-icon ${result.score >= 80 ? 'excellent' : result.score >= 60 ? 'good' : 'needs-improvement'}">
-                <i class="fas fa-${result.score >= 80 ? 'trophy' : result.score >= 60 ? 'smile' : 'frown'}"></i>
+        <div class="quiz-result text-center">
+            <div class="result-icon ${result.score >= 80 ? 'excellent' : 'good'}">
+                <i class="fas fa-trophy"></i>
             </div>
-            
-            <h2>${result.performance}</h2>
-            <p class="result-score">${Math.round(result.score)}%</p>
-            
-            <div class="result-stats">
-                <div class="stat">
-                    <i class="fas fa-check-circle"></i>
-                    <span>${result.correct_answers}/${result.total_questions} Correct</span>
-                </div>
-                <div class="stat">
-                    <i class="fas fa-clock"></i>
-                    <span>${minutes}m ${seconds}s</span>
-                </div>
-                <div class="stat">
-                    <i class="fas fa-percentage"></i>
-                    <span>${Math.round(result.accuracy)}% Accuracy</span>
-                </div>
-            </div>
-            
+            <h2>Score: ${Math.round(result.score)}%</h2>
+            <p>You got ${result.correct_answers} out of ${result.total_questions} correct.</p>
             <div class="result-actions">
-                <button onclick="showSection('overview')" class="btn">
-                    <i class="fas fa-home"></i> Back to Dashboard
-                </button>
-                <button onclick="showSection('recommendations')" class="btn btn-primary">
-                    <i class="fas fa-lightbulb"></i> View Recommendations
-                </button>
+                <button onclick="showSection('overview')" class="btn">Dashboard</button>
+                <button onclick="showSection('recommendations')" class="btn btn-primary">Next Steps</button>
             </div>
         </div>
     `;
+    // Refresh profile stats
+    loadUserProfile(); 
 }
 
 // ==================== BOOKMARKS ====================
 async function loadBookmarks() {
     try {
         const response = await fetch('/api/bookmarks');
-        const bookmarks = await response.json();
-        
         if (response.ok) {
+            const bookmarks = await response.json();
             displayBookmarks(bookmarks);
         }
-    } catch (error) {
-        console.error('Error loading bookmarks:', error);
-    }
+    } catch (e) { console.error(e); }
 }
 
 function displayBookmarks(bookmarks) {
     const container = document.getElementById('bookmarksList');
-    
-    if (bookmarks.length === 0) {
-        container.innerHTML = '<p class="text-muted">No bookmarks yet</p>';
+    if (!bookmarks.length) {
+        container.innerHTML = '<p class="text-muted">No bookmarks yet.</p>';
         return;
     }
-    
     container.innerHTML = `
         <div class="resources-grid">
-            ${bookmarks.map(bookmark => `
+            ${bookmarks.map(b => `
                 <div class="resource-card">
-                    <div class="resource-icon ${bookmark.type}">
-                        <i class="fas fa-${bookmark.type === 'video' ? 'play-circle' : 'file-alt'}"></i>
-                    </div>
-                    <h4>${bookmark.title}</h4>
-                    <p class="text-muted">${bookmark.subject_name} - ${bookmark.topic_name}</p>
+                    <h4>${b.title}</h4>
+                    <p class="text-muted">${b.subject_name}</p>
                     <div class="resource-actions">
-                        <a href="${bookmark.url}" target="_blank" class="btn-small btn-primary">
-                            <i class="fas fa-external-link-alt"></i> Open
-                        </a>
-                        <button onclick="removeBookmark(${bookmark.id})" class="btn-small">
-                            <i class="fas fa-trash"></i>
-                        </button>
+                        <a href="${b.url}" target="_blank" class="btn-small">Open</a>
+                        <button onclick="removeBookmark(${b.id})" class="btn-small"><i class="fas fa-trash"></i></button>
                     </div>
                 </div>
             `).join('')}
-        </div>
-    `;
+        </div>`;
 }
 
 async function bookmarkResource(resourceId) {
-    try {
-        const response = await fetch('/api/bookmarks/add', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ resource_id: resourceId })
-        });
-        
-        if (response.ok) {
-            showToast('Bookmark added', 'success');
-        }
-    } catch (error) {
-        console.error('Error adding bookmark:', error);
-        showToast('Failed to add bookmark', 'error');
-    }
+    await fetch('/api/bookmarks/add', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({resource_id: resourceId})
+    });
+    showToast('Bookmarked!', 'success');
 }
 
-async function removeBookmark(bookmarkId) {
-    try {
-        const response = await fetch(`/api/bookmarks/remove/${bookmarkId}`, {
-            method: 'DELETE'
-        });
-        
-        if (response.ok) {
-            showToast('Bookmark removed', 'success');
-            loadBookmarks();
-        }
-    } catch (error) {
-        console.error('Error removing bookmark:', error);
-        showToast('Failed to remove bookmark', 'error');
-    }
+async function removeBookmark(id) {
+    await fetch(`/api/bookmarks/remove/${id}`, { method: 'DELETE' });
+    loadBookmarks();
+    showToast('Removed', 'info');
 }
 
 // ==================== SETTINGS ====================
 async function updateSettings(event) {
     event.preventDefault();
-    
-    const semester = document.getElementById('settingsSemester').value;
-    
-    showLoading();
-    
-    try {
-        const response = await fetch('/api/profile/update', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ semester: parseInt(semester) })
-        });
-        
-        if (response.ok) {
-            showToast('Settings updated successfully', 'success');
-            currentSemester = parseInt(semester);
-            loadUserProfile();
-        }
-    } catch (error) {
-        console.error('Error updating settings:', error);
-        showToast('Failed to update settings', 'error');
-    } finally {
-        hideLoading();
-    }
+    const sem = document.getElementById('settingsSemester').value;
+    await fetch('/api/profile/update', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({semester: sem})
+    });
+    showToast('Settings Saved', 'success');
+    loadUserProfile();
 }
 
-// ==================== THEME ====================
 function toggleTheme() {
     document.body.classList.toggle('dark-theme');
-    localStorage.setItem('theme', document.body.classList.contains('dark-theme') ? 'dark' : 'light');
 }
 
 function setTheme(theme) {
-    if (theme === 'dark') {
-        document.body.classList.add('dark-theme');
-    } else {
-        document.body.classList.remove('dark-theme');
-    }
-    localStorage.setItem('theme', theme);
-    
-    // Update active theme button
-    document.querySelectorAll('.theme-option').forEach(btn => {
-        btn.classList.remove('active');
-    });
-    event.target.classList.add('active');
-}
-
-// Load saved theme
-const savedTheme = localStorage.getItem('theme');
-if (savedTheme === 'dark') {
-    document.body.classList.add('dark-theme');
+    if (theme === 'dark') document.body.classList.add('dark-theme');
+    else document.body.classList.remove('dark-theme');
 }
