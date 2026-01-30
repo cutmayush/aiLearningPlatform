@@ -19,7 +19,7 @@ CORS(app)
 
 # ==================== GEMINI API CONFIGURATION ====================
 # Yahan apni NEW API Key dalein
-GENAI_API_KEY = "AIzaSyBh9AMk0QIk9pqNERkjtRwfLXtRnpZigQs"
+GENAI_API_KEY = "AIzaSyDUoO5EoZaOZ0vvAB9-Ooxz9JuhDAd53eI"
 genai.configure(api_key=GENAI_API_KEY)
 
 # Use the latest Gemini Flash model
